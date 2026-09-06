@@ -2,6 +2,7 @@
 #include <folly/Random.h>
 #include <folly/experimental/TestUtil.h>
 #include <folly/logging/xlog.h>
+#include <fstream>
 #include <gflags/gflags.h>
 #include <gtest/gtest.h>
 
@@ -82,7 +83,7 @@ TEST(TestShuffle, CheckDump) {
   ASSERT_TRUE(file.is_open()) << "failed to open: " << FLAGS_test_dump_path;
 
   std::string line;
-  std::getline(file, line); // skip header
+  std::getline(file, line);  // skip header
 
   std::cerr << "id,seed,size,match_gcc10,match_gcc11" << std::endl;
 
@@ -90,59 +91,51 @@ TEST(TestShuffle, CheckDump) {
   uint64_t mismatch_g10 = 0, mismatch_g11 = 0, mismatch_both = 0;
 
   while (std::getline(file, line)) {
-      std::istringstream iss(line);
-      std::string id_str, seed_str, size_str;
+    std::istringstream iss(line);
+    std::string id_str, seed_str, size_str;
 
-      std::getline(iss, id_str, ',');
-      std::getline(iss, seed_str, ',');
-      std::getline(iss, size_str, ',');
+    std::getline(iss, id_str, ',');
+    std::getline(iss, seed_str, ',');
+    std::getline(iss, size_str, ',');
 
-      uint64_t id = std::stoull(id_str, nullptr, 16);
-      uint64_t seed = std::stoull(seed_str);
-      uint64_t size = std::stoull(size_str);
+    uint64_t id = std::stoull(id_str, nullptr, 16);
+    uint64_t seed = std::stoull(seed_str);
+    uint64_t size = std::stoull(size_str);
 
-      std::vector<uint64_t> vec_std(size), vec_g10(size), vec_g11(size);
-      std::iota(vec_std.begin(), vec_std.end(), 0);
-      std::iota(vec_g10.begin(), vec_g10.end(), 0);
-      std::iota(vec_g11.begin(), vec_g11.end(), 0);
+    std::vector<uint64_t> vec_std(size), vec_g10(size), vec_g11(size);
+    std::iota(vec_std.begin(), vec_std.end(), 0);
+    std::iota(vec_g10.begin(), vec_g10.end(), 0);
+    std::iota(vec_g11.begin(), vec_g11.end(), 0);
 
-      std_shuffle(vec_std, seed);
-      gcc10_shuffle(vec_g10, seed);
-      gcc11_shuffle(vec_g11, seed);
+    std_shuffle(vec_std, seed);
+    gcc10_shuffle(vec_g10, seed);
+    gcc11_shuffle(vec_g11, seed);
 
-      bool match_g10 = (vec_std == vec_g10);
-      bool match_g11 = (vec_std == vec_g11);
+    bool match_g10 = (vec_std == vec_g10);
+    bool match_g11 = (vec_std == vec_g11);
 
-      if (!match_g10 || !match_g11) {
-          std::cerr << std::hex << id << std::dec << ","
-                << seed << ","
-                << size << ","
-                << (match_g10 ? "true" : "false") << ","
-                << (match_g11 ? "true" : "false") << std::endl;
-      }
+    if (!match_g10 || !match_g11) {
+      std::cerr << std::hex << id << std::dec << "," << seed << "," << size << "," << (match_g10 ? "true" : "false")
+                << "," << (match_g11 ? "true" : "false") << std::endl;
+    }
 
-      if (!match_g10 && !match_g11) {
-          mismatch_both++;
-      } else if (!match_g10) {
-          mismatch_g10++;
-      } else if (!match_g11) {
-          mismatch_g11++;
-      }
+    if (!match_g10 && !match_g11) {
+      mismatch_both++;
+    } else if (!match_g10) {
+      mismatch_g10++;
+    } else if (!match_g11) {
+      mismatch_g11++;
+    }
 
-      total++;
-      if (total % 10000 == 0) {
-          std::cout << "Progress: " << total
-                    << ", g++10_only_mismatch: " << mismatch_g10
-                    << ", g++11_only_mismatch: " << mismatch_g11
-                    << ", both_mismatch: " << mismatch_both << std::endl;
-      }
+    total++;
+    if (total % 10000 == 0) {
+      std::cout << "Progress: " << total << ", g++10_only_mismatch: " << mismatch_g10
+                << ", g++11_only_mismatch: " << mismatch_g11 << ", both_mismatch: " << mismatch_both << std::endl;
+    }
   }
 
-  std::cout << "Done. Total: " << total
-            << ", g++10_only_mismatch: " << mismatch_g10
-            << ", g++11_only_mismatch: " << mismatch_g11
-            << ", both_mismatch: " << mismatch_both << std::endl;
-
+  std::cout << "Done. Total: " << total << ", g++10_only_mismatch: " << mismatch_g10
+            << ", g++11_only_mismatch: " << mismatch_g11 << ", both_mismatch: " << mismatch_both << std::endl;
 }
 
 }  // namespace

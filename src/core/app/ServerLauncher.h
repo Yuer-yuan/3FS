@@ -2,6 +2,10 @@
 
 #include "LauncherUtils.h"
 #include "common/app/ApplicationBase.h"
+#include "common/net/TransportRuntime.h"
+#if HF3FS_ENABLE_RDMA
+#include "common/net/ib/IBDevice.h"
+#endif
 #include "common/utils/ConstructLog.h"
 #include "fbs/mgmtd/ConfigInfo.h"
 
@@ -38,9 +42,20 @@ class ServerLauncher : public ServerLauncherBase {
     XLOGF(INFO, "Full AppConfig:\n{}", appConfig_.toString());
     XLOGF(INFO, "Full LauncherConfig:\n{}", launcherConfig_.toString());
 
-    auto ibResult = net::IBManager::start(launcherConfig_.ib_devices());
-    XLOGF_IF(FATAL, !ibResult, "Failed to start IBManager: {}", ibResult.error());
-    XLOGF(INFO, "IBDevice inited");
+    if (launcherConfig_.cxl().enabled()) {
+      auto cxlResult = net::TransportRuntime::startConfigured(launcherConfig_.cxl());
+      XLOGF_IF(FATAL, !cxlResult, "Failed to start CXL transport runtime: {}", cxlResult.error());
+      XLOGF(INFO, "CXL transport runtime initialized");
+    } else {
+#if HF3FS_ENABLE_RDMA
+      auto ibResult = net::IBManager::start(launcherConfig_.ib_devices());
+      XLOGF_IF(FATAL, !ibResult, "Failed to start IBManager: {}", ibResult.error());
+      XLOGF(INFO, "IBDevice initialized");
+#else
+      return makeError(RPCCode::kDataPlaneNotInitialized,
+                       "CXL transport must be enabled because RDMA support is disabled in this build");
+#endif
+    }
 
     fetcher_ = std::make_unique<RemoteConfigFetcher>(launcherConfig_);
     return Void{};

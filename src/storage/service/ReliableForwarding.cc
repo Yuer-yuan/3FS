@@ -4,6 +4,7 @@
 
 #include "common/app/ApplicationBase.h"
 #include "common/monitor/Recorder.h"
+#include "common/net/TransportRuntime.h"
 #include "common/utils/Duration.h"
 #include "common/utils/ExponentialBackoffRetry.h"
 #include "fbs/storage/Common.h"
@@ -32,7 +33,9 @@ Result<Void> ReliableForwarding::stopAndJoin() { return Void{}; }
 
 CoTask<IOResult> ReliableForwarding::forwardWithRetry(ServiceRequestContext &requestCtx,
                                                       const UpdateReq &req,
-                                                      const net::RDMARemoteBuf &rdmabuf,
+                                                      const net::RemoteBufferHandle &remoteBuf,
+                                                      const std::shared_ptr<void> &remoteLifetime,
+                                                      const uint8_t *forwardingData,
                                                       const ChunkEngineUpdateJob &chunkEngineJob,
                                                       TargetPtr &target,
                                                       CommitIO &commitIO,
@@ -41,6 +44,8 @@ CoTask<IOResult> ReliableForwarding::forwardWithRetry(ServiceRequestContext &req
 
   auto recordGuard = reliableForwardRecorder.record();
   IOResult ioResult;
+  auto preparedRemoteBuf = remoteBuf;
+  auto preparedRemoteLifetime = remoteLifetime;
 
   ExponentialBackoffRetry retry(config_.retry_first_wait().asMs(),
                                 config_.retry_max_wait().asMs(),
@@ -52,7 +57,15 @@ CoTask<IOResult> ReliableForwarding::forwardWithRetry(ServiceRequestContext &req
     CO_RETURN_ON_ERROR(targetResult);
     target = std::move(*targetResult);
 
-    auto ioResult = co_await forward(req, retryCount, rdmabuf, chunkEngineJob, target, commitIO, waitTime);
+    auto ioResult = co_await forward(req,
+                                     retryCount,
+                                     preparedRemoteBuf,
+                                     preparedRemoteLifetime,
+                                     forwardingData,
+                                     chunkEngineJob,
+                                     target,
+                                     commitIO,
+                                     waitTime);
     if (LIKELY(bool(ioResult.lengthInfo))) {
       recordGuard.succ();
       co_return ioResult;
@@ -105,7 +118,9 @@ CoTask<IOResult> ReliableForwarding::forwardWithRetry(ServiceRequestContext &req
 
 CoTask<IOResult> ReliableForwarding::forward(const UpdateReq &req,
                                              uint32_t retryCount,
-                                             const net::RDMARemoteBuf &rdmabuf,
+                                             net::RemoteBufferHandle &remoteBuf,
+                                             std::shared_ptr<void> &remoteLifetime,
+                                             const uint8_t *forwardingData,
                                              const ChunkEngineUpdateJob &chunkEngineJob,
                                              TargetPtr &target,
                                              CommitIO &commitIO,
@@ -116,7 +131,15 @@ CoTask<IOResult> ReliableForwarding::forward(const UpdateReq &req,
     co_return makeError(StorageCode::kNoSuccessorTarget);
   }
 
-  auto ioResult = co_await doForward(req, rdmabuf, chunkEngineJob, retryCount, *target, commitIO.isSyncing, timeout);
+  auto ioResult = co_await doForward(req,
+                                     remoteBuf,
+                                     remoteLifetime,
+                                     forwardingData,
+                                     chunkEngineJob,
+                                     retryCount,
+                                     *target,
+                                     commitIO.isSyncing,
+                                     timeout);
   if (ioResult.lengthInfo) {
     commitIO.commitVer = ioResult.commitVer;
     // use successor's chain version.
@@ -136,7 +159,9 @@ CoTask<IOResult> ReliableForwarding::forward(const UpdateReq &req,
 }
 
 CoTask<IOResult> ReliableForwarding::doForward(const UpdateReq &req,
-                                               const net::RDMARemoteBuf &rdmabuf,
+                                               net::RemoteBufferHandle &remoteBuf,
+                                               std::shared_ptr<void> &remoteLifetime,
+                                               const uint8_t *forwardingData,
                                                const ChunkEngineUpdateJob &chunkEngineJob,
                                                uint32_t retryCount,
                                                const Target &target,
@@ -145,10 +170,11 @@ CoTask<IOResult> ReliableForwarding::doForward(const UpdateReq &req,
   UpdateReq updateReq = req;
   updateReq.options.fromClient = false;
   updateReq.retryCount = retryCount;
-  updateReq.payload.rdmabuf = rdmabuf;
+  updateReq.payload.remoteBuf = remoteBuf;
+  updateReq.requestLifetime = remoteLifetime;
   updateReq.payload.key.vChainId.chainVer = target.vChainId.chainVer;
 
-  auto buffer = components_.rdmabufPool.get();
+  auto buffer = components_.bufferPool.get();
   isSyncing = target.successor->targetInfo.publicState == hf3fs::flat::PublicTargetState::SYNCING;
   if (isSyncing) {
     updateReq.options.isSyncing = true;
@@ -203,13 +229,28 @@ CoTask<IOResult> ReliableForwarding::doForward(const UpdateReq &req,
     }
     updateReq.payload.offset = 0;
     updateReq.payload.length = length;
-    updateReq.payload.rdmabuf = readBuf.first(length).toRemoteBuf();
+    auto transferBuffer = readBuf.subrange(0, length);
+    if (!transferBuffer) {
+      co_return makeError(std::move(transferBuffer.error()));
+    }
+    forwardingData = transferBuffer->data();
     updateReq.payload.checksum = batch.front().state().chunkChecksum;
     updateReq.payload.updateType = UpdateType::WRITE;
 
     if (length <= config_.max_inline_forward_bytes()) {
-      updateReq.payload.inlinebuf.data.assign(readBuf.ptr(), readBuf.ptr() + length);
+      updateReq.payload.remoteBuf = {};
+      updateReq.requestLifetime.reset();
+      updateReq.payload.inlinebuf.data.assign(readBuf.data(), readBuf.data() + length);
       BITFLAGS_SET(updateReq.featureFlags, hf3fs::storage::FeatureFlags::SEND_DATA_INLINE);
+    } else {
+      auto arena = net::TransportRuntime::cxlBufferArena();
+      auto exported = arena ? arena->exportReadOnlyCopy({transferBuffer->data(), transferBuffer->size()})
+                            : Result<net::RemoteExport>{makeError(RPCCode::kDataPlaneNotInitialized)};
+      if (!exported) {
+        co_return makeError(std::move(exported.error()));
+      }
+      updateReq.payload.remoteBuf = exported->handle();
+      updateReq.requestLifetime = std::make_shared<net::RemoteExportLease>(exported->takeLease());
     }
 
     recordGuard.succ();
@@ -222,6 +263,26 @@ CoTask<IOResult> ReliableForwarding::doForward(const UpdateReq &req,
     updateReq.payload.updateVer = chunkResult->updateVer;
   }
 
+  if (updateReq.payload.isWrite() &&
+      !BITFLAGS_CONTAIN(updateReq.featureFlags, FeatureFlags::SEND_DATA_INLINE) &&
+      updateReq.payload.remoteBuf == net::RemoteBufferHandle{}) {
+    if (forwardingData == nullptr) {
+      co_return makeError(StatusCode::kInvalidArg, "forwarding write has no stable local data");
+    }
+    auto arena = net::TransportRuntime::cxlBufferArena();
+    auto exported = arena ? arena->exportReadOnlyCopy({forwardingData, updateReq.payload.length})
+                          : Result<net::RemoteExport>{makeError(RPCCode::kDataPlaneNotInitialized)};
+    if (!exported) {
+      co_return makeError(std::move(exported.error()));
+    }
+    // Cache the immutable export for retries. The request also owns its lease
+    // so a transport completion after the caller's timeout remains pinned.
+    remoteBuf = exported->handle();
+    remoteLifetime = std::make_shared<net::RemoteExportLease>(exported->takeLease());
+    updateReq.payload.remoteBuf = remoteBuf;
+    updateReq.requestLifetime = remoteLifetime;
+  }
+
   auto recordGuard = updateRemoteRecorder.record();
   auto addrResult = target.getSuccessorAddr();
   if (UNLIKELY(!addrResult)) {
@@ -230,6 +291,7 @@ CoTask<IOResult> ReliableForwarding::doForward(const UpdateReq &req,
   }
   net::UserRequestOptions reqOptions;
   reqOptions.timeout = Duration{timeout};
+  reqOptions.requestLifetime = updateReq.requestLifetime;
   auto updateResult = co_await components_.messenger.update(*addrResult, updateReq, &reqOptions);
   if (UNLIKELY(!updateResult)) {
     XLOGF(ERR, "forward timeout, req {}, result {}", updateReq, updateResult);
@@ -263,12 +325,12 @@ CoTask<IOResult> ReliableForwarding::doForward(const UpdateReq &req,
     auto errorCode = updateResult->result.lengthInfo.error().code();
     if (errorCode == StorageCode::kChecksumMismatch) {
       auto reqChecksum = updateReq.payload.checksum;
-      auto realChecksum = ChecksumInfo::create(reqChecksum.type,
-                                               (const uint8_t *)updateReq.payload.rdmabuf.addr(),
-                                               updateReq.payload.length);
+      auto realChecksum = forwardingData == nullptr
+                              ? ChecksumInfo{ChecksumType::NONE, 0}
+                              : ChecksumInfo::create(reqChecksum.type, forwardingData, updateReq.payload.length);
       if (reqChecksum != realChecksum) {
         XLOGF(DFATAL,
-              "local rdma buffer is corrupted local {} != client {}, req: {}, kill self...",
+              "local bulk buffer is corrupted local {} != client {}, req: {}, kill self...",
               realChecksum,
               reqChecksum,
               req);

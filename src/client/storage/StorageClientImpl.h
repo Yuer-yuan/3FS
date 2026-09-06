@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/utils/AtomicSharedPtr.h"
 #include <span>
 #include <vector>
 
@@ -227,7 +228,7 @@ class StorageClientImpl : public StorageClient {
   StorageMessenger messenger_;
   StorageMessenger messengerForUpdates_;
   UpdateChannelAllocator chanAllocator_;
-  folly::atomic_shared_ptr<hf3fs::client::RoutingInfo const> currentRoutingInfo_;
+  hf3fs::AtomicSharedPtr<hf3fs::client::RoutingInfo const> currentRoutingInfo_;
 
   HotLoadOperationConcurrencyLimit readConcurrencyLimit_;
   OperationConcurrencyLimit writeConcurrencyLimit_;

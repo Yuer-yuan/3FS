@@ -7,49 +7,49 @@
 
 namespace hf3fs::net {
 
-struct RDMATransmissionReq {
+struct BulkTransmissionReq {
   SERDE_STRUCT_FIELD(uuid, size_t{});
 };
 
-struct RDMATransmissionRsp {
+struct BulkTransmissionRsp {
   SERDE_STRUCT_FIELD(dummy, Void{});
 };
 
-SERDE_SERVICE(RDMAControl, 10) { SERDE_SERVICE_METHOD(apply, 1, RDMATransmissionReq, RDMATransmissionRsp); };
+// Service and method IDs are retained from the phase-0 protocol.
+SERDE_SERVICE(BulkControl, 10) { SERDE_SERVICE_METHOD(apply, 1, BulkTransmissionReq, BulkTransmissionRsp); };
 
-class RDMATransmissionLimiter {
+class BulkTransmissionLimiter {
  public:
-  RDMATransmissionLimiter(uint32_t maxConcurrentTransmission)
+  explicit BulkTransmissionLimiter(uint32_t maxConcurrentTransmission)
       : semaphore_(maxConcurrentTransmission) {}
 
   CoTask<void> co_wait();
-
   void signal(Duration latency);
-
   void updateMaxConcurrentTransmission(uint32_t value) { semaphore_.changeUsableTokens(value); }
 
  private:
   Semaphore semaphore_;
   std::atomic<uint32_t> current_{};
 };
-using RDMATransmissionLimiterPtr = std::shared_ptr<RDMATransmissionLimiter>;
+using BulkTransmissionLimiterPtr = std::shared_ptr<BulkTransmissionLimiter>;
 
-class RDMAControlImpl : public serde::ServiceWrapper<RDMAControlImpl, RDMAControl> {
+class BulkControlImpl : public serde::ServiceWrapper<BulkControlImpl, BulkControl> {
  public:
   class Config : public ConfigBase<Config> {
     CONFIG_HOT_UPDATED_ITEM(max_concurrent_transmission, 64u);
   };
-  RDMAControlImpl(const Config &config)
+
+  explicit BulkControlImpl(const Config &config)
       : config_(config),
-        limiter_(std::make_shared<RDMATransmissionLimiter>(config_.max_concurrent_transmission())),
+        limiter_(std::make_shared<BulkTransmissionLimiter>(config_.max_concurrent_transmission())),
         guard_(config_.addCallbackGuard(
             [&] { limiter_->updateMaxConcurrentTransmission(config_.max_concurrent_transmission()); })) {}
 
-  CoTryTask<RDMATransmissionRsp> apply(serde::CallContext &, const RDMATransmissionReq &req);
+  CoTryTask<BulkTransmissionRsp> apply(serde::CallContext &, const BulkTransmissionReq &req);
 
  private:
   const Config &config_;
-  RDMATransmissionLimiterPtr limiter_;
+  BulkTransmissionLimiterPtr limiter_;
   std::unique_ptr<ConfigCallbackGuard> guard_;
 };
 

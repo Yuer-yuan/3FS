@@ -6,11 +6,11 @@ coroutines = 8
 cluster_id = '${FS_CLUSTER}'
 
 [meta_client]
-network_type = 'RDMA'
+network_type = 'CXL'
 selection_mode = 'UniformRandom'
 
 [mgmtd_client]
-mgmtd_server_addresses = [ 'RDMA://${ADDRESS}:${MGMTD_PORT}' ]
+mgmtd_server_addresses = [ 'CXL://${ADDRESS}:${MGMTD_PORT}' ]
 
 [net_client]
 default_timeout = '1s'

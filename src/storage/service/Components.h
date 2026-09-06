@@ -1,6 +1,6 @@
 #pragma once
 
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 
 #include "client/mgmtd/MgmtdClientForServer.h"
 #include "client/storage/StorageMessenger.h"
@@ -30,10 +30,12 @@ struct Components {
     CONFIG_OBJ(base, net::Server::Config, [](net::Server::Config &c) {
       c.set_groups_length(2);
       c.groups(0).listener().set_listen_port(8000);
-      c.groups(0).set_network_type(net::Address::RDMA);
+      c.groups(0).set_network_type(net::Address::CXL);
+      c.groups(0).set_service_plane(net::ServicePlane::Data);
       c.groups(0).set_services({"StorageSerde"});
 
       c.groups(1).set_network_type(net::Address::TCP);
+      c.groups(1).set_service_plane(net::ServicePlane::Control);
       c.groups(1).listener().set_listen_port(9000);
       c.groups(1).set_use_independent_thread_pool(true);
       c.groups(1).set_services({"Core"});
@@ -99,8 +101,8 @@ struct Components {
   const Config &config;
   flat::AppInfo appInfo;
   std::unique_ptr<net::Client> netClient;
-  folly::atomic_shared_ptr<hf3fs::client::IMgmtdClientForServer> mgmtdClient;
-  BufferPool rdmabufPool;
+  hf3fs::AtomicSharedPtr<hf3fs::client::IMgmtdClientForServer> mgmtdClient;
+  BufferPool bufferPool;
   AtomicallyTargetMap targetMap;
   StorageTargets storageTargets;
   AioReadWorker aioReadWorker;

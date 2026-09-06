@@ -137,7 +137,15 @@ std::shared_ptr<hf3fs::flat::RoutingInfo> UnitTestFabric::createRoutingInfo(
   return routingInfo;
 }
 
-std::unique_ptr<storage::StorageServer> UnitTestFabric::createStorageServer(size_t nodeIndex) {
+std::vector<net::Address> UnitTestFabric::mgmtdAddresses() const {
+  return cxlFixture_ ? cxlFixture_->mgmtdAddresses() : mgmtdServer_.collectAddressList("Mgmtd");
+}
+
+void UnitTestFabric::updateMgmtdConfig() {
+  if (cxlFixture_) cxlFixture_->updateMgmtdConfig(mgmtdServer_.config);
+}
+
+std::unique_ptr<StorageTestServer> UnitTestFabric::createStorageServer(size_t nodeIndex) {
   const auto storageEndpoints = setupConfig_.storage_endpoints();
   const auto serverConfigPath = setupConfig_.server_config();
   const auto listenPort = setupConfig_.listen_port();
@@ -147,7 +155,7 @@ std::unique_ptr<storage::StorageServer> UnitTestFabric::createStorageServer(size
 
   auto nodeId = storageNodeIds_[nodeIndex];
   storage::StorageServer::Config &serverConfig = serverConfigs_[nodeIndex];
-  const auto &mgmtdAddressList = mgmtdServer_.collectAddressList("Mgmtd");
+  const auto mgmtdAddressList = mgmtdAddresses();
 
   XLOGF(INFO, "Preparing storage config #{} {}...", nodeIndex, nodeId);
 
@@ -163,12 +171,12 @@ std::unique_ptr<storage::StorageServer> UnitTestFabric::createStorageServer(size
     serverConfig.storage().write_worker().set_num_threads(16);
     serverConfig.storage().set_post_buffer_per_bytes(64_KB);
     serverConfig.storage().set_max_num_results_per_query(3);
-    serverConfig.storage().set_rdma_transmission_req_timeout(100_ms);
+    serverConfig.storage().set_bulk_transmission_req_timeout(100_ms);
 
     serverConfig.aio_read_worker().set_num_threads(16);
     serverConfig.aio_read_worker().set_ioengine(storage::AioReadWorker::IoEngine::random);
-    serverConfig.buffer_pool().set_rdmabuf_count(256);
-    serverConfig.buffer_pool().set_big_rdmabuf_count(4);
+    serverConfig.buffer_pool().set_buffer_count(256);
+    serverConfig.buffer_pool().set_big_buffer_count(4);
 
     serverConfig.mgmtd().set_enable_auto_refresh(true);
     serverConfig.mgmtd().set_enable_auto_heartbeat(true);
@@ -201,6 +209,8 @@ std::unique_ptr<storage::StorageServer> UnitTestFabric::createStorageServer(size
   serverConfig.coroutines_pool_update().set_threads_num(32);
   serverConfig.coroutines_pool_update().set_coroutines_num(4096);
   serverConfig.set_speed_up_quit(false);
+
+  if (cxlFixture_) return cxlFixture_->prepareStorage(nodeIndex, serverConfig, nodeId);
 
   XLOGF(INFO, "Allocating storage server #{} {}...", nodeIndex, nodeId);
   auto storageMemory =
@@ -235,7 +245,7 @@ std::unique_ptr<storage::StorageServer> UnitTestFabric::createStorageServer(size
   }
 
   XLOGF(INFO, "Started storage server #{} {}...", nodeIndex, nodeId);
-  return storageServer;
+  return std::make_unique<StorageTestServer>(std::move(storageServer));
 }
 
 bool UnitTestFabric::setUpStorageSystem() {
@@ -251,6 +261,13 @@ bool UnitTestFabric::setUpStorageSystem() {
   const auto clientImplType = setupConfig_.client_impl_type();
   const auto storageEndpoints = setupConfig_.storage_endpoints();
   const auto serviceLevel = setupConfig_.service_level();
+  const bool externalFakeClient = !setupConfig_.start_storage_server() && setupConfig_.use_fake_mgmtd_client();
+
+#if HF3FS_ENABLE_CXL && !HF3FS_ENABLE_RDMA
+  if (setupConfig_.start_storage_server() && storageEndpoints.empty()) {
+    cxlFixture_ = std::make_unique<CxlStorageTestFixture>(numStorageNodes);
+  }
+#endif
 
   // validate options
 
@@ -262,7 +279,7 @@ bool UnitTestFabric::setUpStorageSystem() {
   size_t totalNumTargets = numChains * numReplicas;
   size_t totalNumDataPaths = numStorageNodes * numDataPaths;
 
-  if (0 != totalNumTargets % totalNumDataPaths) {
+  if (totalNumDataPaths == 0 || 0 != totalNumTargets % totalNumDataPaths) {
     XLOGF(ERR,
           "Invalid arguments: numChains {} * numReplicas {} % numStorageNodes {} * numDataPaths {} != 0",
           numChains,
@@ -294,10 +311,18 @@ bool UnitTestFabric::setUpStorageSystem() {
   targetsConfigs_.resize(numStorageNodes);
   serverConfigs_.resize(numStorageNodes);
 
-  for (uint32_t nodeIndex = 0; nodeIndex < numStorageNodes; nodeIndex++) {
+  for (uint32_t nodeIndex = 0; !externalFakeClient && nodeIndex < numStorageNodes; nodeIndex++) {
     // create a temp subfolder under each data path for the storage node
     std::vector<Path> targetPaths;
-    if (setupConfig_.use_temp_path()) {
+    if (cxlFixture_ && setupConfig_.use_temp_path()) {
+      for (size_t pathIndex = 0; pathIndex < dataPaths.size(); ++pathIndex) {
+        auto path = std::filesystem::path(dataPaths[pathIndex].string()) /
+                    fmt::format("{}-storage-{}-data-{}", cxlFixture_->directory().filename().string(), nodeIndex, pathIndex);
+        std::filesystem::create_directory(path);
+        cxlTempDataPaths_.push_back(path);
+        targetPaths.emplace_back(path.string());
+      }
+    } else if (setupConfig_.use_temp_path()) {
       for (const auto &dataPath : dataPaths) {
         tmpDataPaths_[nodeIndex].emplace_back(
             fmt::format("{}_node{:02d}" /*namePrefix*/, kTempDataFolderPrefix, nodeIndex),
@@ -355,14 +380,16 @@ bool UnitTestFabric::setUpStorageSystem() {
   mgmtdServer_.config.service().set_heartbeat_fail_interval(1_s);
   mgmtdServer_.config.service().set_allow_heartbeat_from_unregistered(true);
 
-  if (!mgmtdServer_.start(kvEngine)) {
+  if (cxlFixture_) {
+    cxlFixture_->prepareMgmtd(mgmtdServer_.config);
+  } else if (!externalFakeClient && !mgmtdServer_.start(kvEngine)) {
     XLOGF(ERR, "Failed to start mgmtd server");
     return false;
   }
 
-  auto mgmtdAddressList = mgmtdServer_.collectAddressList("Mgmtd");
+  auto mgmtdAddressList = externalFakeClient ? std::vector<net::Address>{} : mgmtdAddresses();
 
-  if (mgmtdAddressList.empty()) {
+  if (mgmtdAddressList.empty() && !externalFakeClient) {
     XLOGF(ERR, "Empty list of mgmtd server address");
     return false;
   }
@@ -399,9 +426,63 @@ bool UnitTestFabric::setUpStorageSystem() {
       if (storageServer == nullptr) {
         return false;
       }
-      nodeEndpoints[nodeId] = storageServer->groups().front()->addressList().front();
+      nodeEndpoints[nodeId] = storageServer->address();
       storageServers_.push_back(std::move(storageServer));
     }
+  }
+
+  // create storage client
+
+  if (cxlFixture_ && prepareCxlServices_) prepareCxlServices_(*cxlFixture_);
+
+  if (!clientConfigPath.empty()) {
+    auto configRes = clientConfig_.atomicallyUpdate(clientConfigPath, false /*isHotUpdate*/);
+    if (!configRes) {
+      XLOGF(ERR, "Cannot load client config from {}, error: {}", clientConfigPath, configRes.error());
+      return false;
+    }
+  } else {
+    clientConfig_.retry().set_init_wait_time(200_ms);
+    clientConfig_.retry().set_max_wait_time(500_ms);
+    clientConfig_.retry().set_max_retry_time(120_s);
+    clientConfig_.net_client().thread_pool().set_num_io_threads(32);
+    clientConfig_.net_client().thread_pool().set_num_proc_threads(32);
+    clientConfig_.net_client().set_default_timeout(1_s);
+#if HF3FS_ENABLE_RDMA
+    clientConfig_.net_client().io_worker().ibsocket().set_max_rdma_wr(1024U);
+    clientConfig_.net_client().io_worker().ibsocket().set_max_rdma_wr_per_post(128U);
+#endif
+    clientConfig_.net_client().io_worker().transport_pool().set_max_connections(256);
+    clientConfig_.net_client().set_enable_bulk_control(true);
+
+    clientConfig_.set_create_net_client_for_updates(true);
+    clientConfig_.net_client_for_updates() = clientConfig_.net_client();
+
+    clientConfig_.set_max_inline_read_bytes(8_KB);
+    clientConfig_.set_max_inline_write_bytes(8_KB);
+    clientConfig_.set_max_read_io_bytes(64_KB);
+  }
+
+  clientConfig_.set_implementation_type(clientImplType);
+#if HF3FS_ENABLE_RDMA
+  clientConfig_.net_client().io_worker().ibsocket().set_sl(serviceLevel);
+#else
+  (void)serviceLevel;
+#endif
+
+  if (cxlFixture_ || net::TransportRuntime::cxlFabric()) {
+    for (auto *config : {&clientConfig_.net_client(), &clientConfig_.net_client_for_updates(), &netClientConfig_}) {
+      config->io_worker().cxlsocket().set_queue_depth(8);
+      config->io_worker().cxlsocket().set_cell_bytes(65536);
+    }
+  }
+  if (cxlFixture_) {
+    const auto &readConfig = clientConfig_.net_client().io_worker().transport_pool();
+    const auto &writeConfig = clientConfig_.net_client_for_updates().io_worker().transport_pool();
+    const uint32_t clientConnections = readConfig.max_connections() +
+        (clientConfig_.create_net_client_for_updates() ? writeConfig.max_connections() : 0) +
+        netClientConfig_.io_worker().transport_pool().max_connections();
+    cxlFixture_->start(storageServers_, serverConfigs_, clientConnections);
   }
 
   XLOGF(INFO, "Creating routing info...");
@@ -410,9 +491,7 @@ bool UnitTestFabric::setUpStorageSystem() {
   XLOGF(INFO, "Starting {} mgmtd client...", setupConfig_.use_fake_mgmtd_client() ? "fake" : "real");
   if (setupConfig_.use_fake_mgmtd_client()) {
     for (auto &server : storageServers_) {
-      auto mgmtdClient = std::make_unique<FakeMgmtdClient>(rawRoutingInfo_);
-      std::unique_ptr<hf3fs::client::IMgmtdClientForServer> client = std::move(mgmtdClient);
-      RoutingStoreHelper::setMgmtdClient(*server, std::move(client));
+      server->setFakeRoutingInfo(rawRoutingInfo_);
     }
 
     mgmtdForClient_.reset((new FakeMgmtdClient(rawRoutingInfo_))->asCommon());
@@ -459,38 +538,7 @@ bool UnitTestFabric::setUpStorageSystem() {
   }
 
   XLOGF(INFO, "Updating routing info {}...", rawRoutingInfo_->routingInfoVersion);
-  updateRoutingInfo([&](auto &routingInfo) { routingInfo = *rawRoutingInfo_; });
-
-  // create storage client
-
-  if (!clientConfigPath.empty()) {
-    auto configRes = clientConfig_.atomicallyUpdate(clientConfigPath, false /*isHotUpdate*/);
-    if (!configRes) {
-      XLOGF(ERR, "Cannot load client config from {}, error: {}", clientConfigPath, configRes.error());
-      return false;
-    }
-  } else {
-    clientConfig_.retry().set_init_wait_time(200_ms);
-    clientConfig_.retry().set_max_wait_time(500_ms);
-    clientConfig_.retry().set_max_retry_time(120_s);
-    clientConfig_.net_client().thread_pool().set_num_io_threads(32);
-    clientConfig_.net_client().thread_pool().set_num_proc_threads(32);
-    clientConfig_.net_client().set_default_timeout(1_s);
-    clientConfig_.net_client().io_worker().ibsocket().set_max_rdma_wr(1024U);
-    clientConfig_.net_client().io_worker().ibsocket().set_max_rdma_wr_per_post(128U);
-    clientConfig_.net_client().io_worker().transport_pool().set_max_connections(256);
-    clientConfig_.net_client().set_enable_rdma_control(true);
-
-    clientConfig_.set_create_net_client_for_updates(true);
-    clientConfig_.net_client_for_updates() = clientConfig_.net_client();
-
-    clientConfig_.set_max_inline_read_bytes(8_KB);
-    clientConfig_.set_max_inline_write_bytes(8_KB);
-    clientConfig_.set_max_read_io_bytes(64_KB);
-  }
-
-  clientConfig_.set_implementation_type(clientImplType);
-  clientConfig_.net_client().io_worker().ibsocket().set_sl(serviceLevel);
+  if (!updateRoutingInfo([&](auto &routingInfo) { routingInfo = *rawRoutingInfo_; })) return false;
 
   XLOGF(INFO, "Creating storage client...");
   storageClient_ = storage::client::StorageClient::create(clientId_, clientConfig_, *mgmtdForClient_);
@@ -499,7 +547,7 @@ bool UnitTestFabric::setUpStorageSystem() {
   return true;
 }
 
-void UnitTestFabric::tearDownStorageSystem() {
+bool UnitTestFabric::tearDownStorageSystem() {
   XLOGF(INFO, "tearDownStorageSystem started!");
 
   XLOGF(INFO, "Stopping storage client");
@@ -513,18 +561,33 @@ void UnitTestFabric::tearDownStorageSystem() {
     folly::coro::blockingWait(mgmtdForClient_->stop());
     mgmtdForClient_.reset();
   }
+  client_.stopAndJoin();
 
   XLOGF(INFO, "Stopping {} storage servers", storageServers_.size());
   for (auto &storageServer : storageServers_) {
-    if (storageServer) storageServer->stopAndJoin();
+    try {
+      if (storageServer) storageServer->stopAndJoin();
+    } catch (const std::exception &error) {
+      ADD_FAILURE() << "Storage fixture teardown failed: " << error.what();
+    }
   }
 
   storageServers_.clear();
 
   XLOGF(INFO, "Stopping mgmtd server");
   mgmtdServer_.stop();
+  if (cxlFixture_) {
+    try { cxlFixture_->stop(::testing::Test::HasFailure()); }
+    catch (const std::exception &error) { ADD_FAILURE() << error.what(); }
+    cxlFixture_.reset();
+    if (!::testing::Test::HasFailure()) {
+      for (const auto &path : cxlTempDataPaths_) std::filesystem::remove_all(path);
+      cxlTempDataPaths_.clear();
+    }
+  }
 
   XLOGF(INFO, "tearDownStorageSystem finished!");
+  return !::testing::Test::HasFailure();
 }
 
 std::shared_ptr<hf3fs::flat::RoutingInfo> UnitTestFabric::getRoutingInfo() {
@@ -576,13 +639,13 @@ bool UnitTestFabric::updateRoutingInfo(std::function<void(hf3fs::flat::RoutingIn
     ++newRoutingInfo->routingInfoVersion.toUnderType();
 
     for (auto &server : storageServers_) {
-      auto client = RoutingStoreHelper::getMgmtdClient(*server);
-      auto fakeClient = dynamic_cast<FakeMgmtdClient *>(client.get());
-      fakeClient->setRoutingInfo(newRoutingInfo);
+      server->setFakeRoutingInfo(newRoutingInfo);
     }
 
     auto fakeClient = dynamic_cast<FakeMgmtdClient *>(mgmtdForClient_.get());
     fakeClient->setRoutingInfo(newRoutingInfo);
+  } else if (cxlFixture_) {
+    cxlFixture_->editRouting(callback);
   } else {
     hf3fs::mgmtd::testing::MgmtdTestHelper mgmtdHelper(*mgmtdServer_.server);
 
@@ -595,7 +658,7 @@ bool UnitTestFabric::updateRoutingInfo(std::function<void(hf3fs::flat::RoutingIn
   }
 
   for (auto &server : storageServers_) {
-    RoutingStoreHelper::refreshRoutingInfo(*server);
+    server->refreshRoutingInfo();
   }
 
   auto refreshRes = folly::coro::blockingWait(mgmtdForClient_->refreshRoutingInfo(/*force=*/true));

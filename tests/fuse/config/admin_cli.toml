@@ -1,13 +1,33 @@
 cluster_id = '${FS_CLUSTER}'
+log = 'DBG:normal; normal=file:path=${ADMIN_LOG},async=true,sync_level=ERR'
 
-[ib_devices]
-default_pkey_index = ${PKEY_INDEX}
+[cxl]
+enabled = true
+endpoint = 7
+endpoint_generation = 0
+manifest_path = '${CXL_MANIFEST}'
+mode = 'Attach'
+region_length = '256MB'
+region_path = '${CXL_REGION}'
+region_type = 'File'
 
 [fdb]
 clusterFile = '${FDB_TEST_CLUSTER}'
 
+[client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [mgmtd_client]
-mgmtd_server_addresses = [ 'RDMA://${ADDRESS}:${MGMTD_PORT}' ]
+mgmtd_server_addresses = [ 'CXL://${ADDRESS}:${MGMTD_PORT}' ]
+
+[storage_client.net_client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
+[storage_client.net_client_for_updates.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
 
 [user_info]
 uid = 0

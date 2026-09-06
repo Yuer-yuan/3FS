@@ -106,5 +106,27 @@ TEST(Status, testMove) {
   ASSERT_TRUE(s4.hasPayload());
   ASSERT_EQ(*s4.payload<std::string>(), "abc");
 }
+
+TEST(Status, CodeOnlyMovePreservesAllCodeBits) {
+  Status source(65535);
+  Status destination(std::move(source));
+  EXPECT_EQ(destination.code(), 65535);
+  EXPECT_TRUE(destination.message().empty());
+  EXPECT_TRUE(source.isOK());
+  source = std::move(destination);
+  EXPECT_EQ(source.code(), 65535);
+  EXPECT_TRUE(destination.isOK());
+}
+
+TEST(Status, ConvertDeepCopiesPayload) {
+  Status source(1, "original");
+  source.setPayload<std::string>("payload");
+  auto converted = source.convert(65535);
+  *converted.payload<std::string>() = "changed";
+  EXPECT_EQ(source.code(), 1);
+  EXPECT_EQ(converted.code(), 65535);
+  EXPECT_EQ(converted.message(), "original");
+  EXPECT_EQ(*source.payload<std::string>(), "payload");
+}
 }  // namespace
 }  // namespace hf3fs::tests

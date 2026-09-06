@@ -45,6 +45,9 @@ TEST_F(TestProcessor, TooManyProcessingRequests) {
   constexpr auto kConcurrentRequestsNum = 16;
 
   Server::Config serverConfig;
+#if !HF3FS_ENABLE_RDMA
+  serverConfig.groups(0).set_network_type(Address::TCP);
+#endif
   serverConfig.groups(0).processor().set_max_processing_requests_num(kMaxProcessingRequestsNum);
   Server server(serverConfig);
   ASSERT_TRUE(server.setup());

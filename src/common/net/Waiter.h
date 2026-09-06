@@ -8,8 +8,8 @@
 #include <mutex>
 #include <vector>
 
+#include "common/net/BulkControl.h"
 #include "common/net/Network.h"
-#include "common/net/RDMAControl.h"
 #include "common/net/Transport.h"
 #include "common/serde/MessagePacket.h"
 #include "common/utils/Duration.h"
@@ -31,8 +31,9 @@ class Waiter {
     IOBufPtr buf;
     serde::MessagePacket<> packet;
     Status status = Status::OK;
+    std::optional<CompletionDisposition> disposition;
     TransportPtr transport;
-    RDMATransmissionLimiterPtr limiter;
+    BulkTransmissionLimiterPtr limiter;
     RelativeTime timestamp = RelativeTime::now();
   };
 
@@ -62,7 +63,7 @@ class Waiter {
   }
 
   std::optional<Duration> setTransmissionLimiterPtr(size_t uuid,
-                                                    const RDMATransmissionLimiterPtr &limiter,
+                                                    const BulkTransmissionLimiterPtr &limiter,
                                                     RelativeTime startTime) {
     return shards_.withLock(
         [&](Map &map) -> std::optional<Duration> {
@@ -81,6 +82,7 @@ class Waiter {
     if (item) {
       item->buf = std::move(buff);
       item->packet = packet;
+      item->disposition = CompletionDisposition::Completed;
       if (item->limiter) {
         item->limiter->signal(RelativeTime::now() - item->timestamp);
       }
@@ -104,6 +106,13 @@ class Waiter {
 
   void timeout(size_t uuid) { error(find(uuid), Status(RPCCode::kTimeout)); }
   void sendFail(size_t uuid) { error(find(uuid), Status(RPCCode::kSendFailed)); }
+  void failWithDisposition(size_t uuid, Status status, CompletionDisposition disposition) {
+    auto *item = find(uuid);
+    if (item) {
+      item->disposition = disposition;
+      error(item, std::move(status));
+    }
+  }
 
   void clearPendingRequestsOnTransportFailure(Transport *tr) {
     shards_.iterate([tr](Map &map) {

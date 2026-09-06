@@ -4,7 +4,7 @@
 #include <utility>
 
 #include "chunk_engine/src/cxx.rs.h"
-#include "common/net/ib/IBSocket.h"
+#include "common/net/Buffer.h"
 #include "common/serde/CallContext.h"
 #include "common/utils/Duration.h"
 #include "fbs/storage/Common.h"
@@ -68,7 +68,7 @@ class AioReadJob {
   IOResult &result_;
   BatchReadJob &batch_;
   struct State {
-    net::RDMABuf localbuf{};
+    net::SharedBuffer localbuf{};
     StorageTarget *storageTarget = nullptr;
     ChunkEngineReadJob chunkEngineJob{};
     SERDE_STRUCT_FIELD(headLength, uint32_t{});
@@ -94,7 +94,7 @@ class BatchReadJob {
     jobs_.back().state().storageTarget = target;
   }
   CoTask<void> complete() { co_await baton_; }
-  size_t addBufferToBatch(serde::CallContext::RDMATransmission &batch);
+  size_t addBufferToBatch(serde::CallContext::BulkTransmission &batch);
   size_t copyToRespBuffer(std::vector<uint8_t> &buffer);
   void finish(AioReadJob *job);
   auto checksumType() const { return checksumType_; }

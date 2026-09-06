@@ -57,6 +57,23 @@ option(OVERRIDE_CXX_NEW_DELETE "Override C++ new/delete operator" OFF)
 option(SAVE_ALLOCATE_SIZE "Use more memory to save allocate size" OFF)
 
 option(ENABLE_FUSE_APPLICATION "" ON)
+option(HF3FS_ENABLE_CXL "Build the CXL transport backend" ON)
+option(HF3FS_ENABLE_RDMA "Build the legacy RDMA transport backend" ON)
+set(HF3FS_FDB_ROOT "" CACHE PATH "FoundationDB client prefix used without installing into the host system")
+set(HF3FS_FUSE3_ROOT "" CACHE PATH "libfuse3 prefix used without installing into the host system")
+
+if(HF3FS_ENABLE_CXL)
+    add_compile_definitions(HF3FS_ENABLE_CXL=1)
+else()
+    add_compile_definitions(HF3FS_ENABLE_CXL=0)
+endif()
+if(HF3FS_ENABLE_RDMA)
+    add_compile_definitions(HF3FS_ENABLE_RDMA=1)
+else()
+    add_compile_definitions(HF3FS_ENABLE_RDMA=0)
+endif()
+message(STATUS "HF3FS_ENABLE_CXL: ${HF3FS_ENABLE_CXL}")
+message(STATUS "HF3FS_ENABLE_RDMA: ${HF3FS_ENABLE_RDMA}")
 
 if (DEFINED SANITIZER AND SANITIZER)
     set(OVERRIDE_CXX_NEW_DELETE OFF)
@@ -81,7 +98,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcoroutines-ts")
+    # Clang 14+ implements C++20 coroutines without the removed
+    # -fcoroutines-ts compatibility flag.
+    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 14)
+        set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcoroutines-ts")
+    endif()
     set(CMAKE_CXX_LINK_FLAGS "${CMAKE_CXX_LINK_FLAGS} -latomic")
     add_link_options(-fuse-ld=lld)
     # Do not build with libc++ (LLVM's implementation of the C++ standard library) in fdb
@@ -108,6 +129,35 @@ add_compile_definitions(ROCKSDB_NAMESPACE=rocksdb_internal)
 include(cmake/Sanitizers.cmake)
 include(cmake/CompileFlags.cmake)
 
+if(HF3FS_FUSE3_ROOT)
+    find_path(HF3FS_FUSE3_INCLUDE_DIR fuse3/fuse_lowlevel.h
+        PATHS "${HF3FS_FUSE3_ROOT}/include" NO_DEFAULT_PATH)
+    find_library(HF3FS_FUSE3_LIBRARY fuse3
+        PATHS "${HF3FS_FUSE3_ROOT}/lib" "${HF3FS_FUSE3_ROOT}/lib/${CMAKE_LIBRARY_ARCHITECTURE}"
+        NO_DEFAULT_PATH)
+else()
+    find_path(HF3FS_FUSE3_INCLUDE_DIR fuse3/fuse_lowlevel.h)
+    find_library(HF3FS_FUSE3_LIBRARY fuse3)
+endif()
+if(NOT HF3FS_FUSE3_INCLUDE_DIR OR NOT HF3FS_FUSE3_LIBRARY)
+    message(FATAL_ERROR "libfuse3 development files were not found; set HF3FS_FUSE3_ROOT to their prefix")
+endif()
+add_library(hf3fs_fuse3 UNKNOWN IMPORTED GLOBAL)
+set_target_properties(hf3fs_fuse3 PROPERTIES
+    IMPORTED_LOCATION "${HF3FS_FUSE3_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${HF3FS_FUSE3_INCLUDE_DIR}")
+
+find_library(HF3FS_AIO_LIBRARY NAMES aio REQUIRED)
+add_library(hf3fs_aio UNKNOWN IMPORTED GLOBAL)
+set_target_properties(hf3fs_aio PROPERTIES IMPORTED_LOCATION "${HF3FS_AIO_LIBRARY}")
+
+find_path(HF3FS_GPERFTOOLS_INCLUDE_DIR gperftools/profiler.h REQUIRED)
+find_library(HF3FS_PROFILER_LIBRARY NAMES profiler REQUIRED)
+add_library(hf3fs_profiler UNKNOWN IMPORTED GLOBAL)
+set_target_properties(hf3fs_profiler PROPERTIES
+    IMPORTED_LOCATION "${HF3FS_PROFILER_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${HF3FS_GPERFTOOLS_INCLUDE_DIR}")
+
 # folly can't work normally under -Werror
 store_compile_flags()
 add_subdirectory("third_party/fmt" EXCLUDE_FROM_ALL)
@@ -125,6 +175,10 @@ add_subdirectory("third_party/googletest" EXCLUDE_FROM_ALL)
 restore_compile_flags()
 set(FOLLY_NO_EXCEPTION_TRACER ON)
 add_subdirectory("third_party/folly" EXCLUDE_FROM_ALL)
+# Folly builds its library with -fsigned-char. Its inline allocator cache and
+# string implementation require consumers to use the same char semantics,
+# including platforms such as RV64 where the compiler defaults to unsigned.
+target_compile_options(folly INTERFACE "$<$<COMPILE_LANGUAGE:CXX>:-fsigned-char>")
 restore_compile_flags()
 set(LEVELDB_BUILD_TESTS OFF CACHE BOOL "Disable LevelDB tests")
 set(LEVELDB_BUILD_BENCHMARKS OFF CACHE BOOL "Disable LevelDB benchmarks")
@@ -141,6 +195,16 @@ set(WITH_TOOLS OFF)
 set(WITH_ALL_TESTS OFF)
 
 add_subdirectory("third_party/rocksdb" EXCLUDE_FROM_ALL)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    # RocksDB 8.10's version_set.cc leaves this counter unused in the
+    # selected feature profile. Keep the repository's -Werror policy while
+    # tolerating that one upstream diagnostic on modern Clang.
+    set_source_files_properties(
+        third_party/rocksdb/db/version_set.cc
+        TARGET_DIRECTORY rocksdb
+        PROPERTIES COMPILE_OPTIONS "-Wno-error=unused-but-set-variable"
+    )
+endif()
 restore_compile_flags()
 set(SCN_TESTS OFF)
 set(SCN_EXAMPLES OFF)

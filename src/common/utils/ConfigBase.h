@@ -4,7 +4,7 @@
 #include <fmt/format.h>
 #include <folly/Likely.h>
 #include <folly/ThreadLocal.h>
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 #include <functional>
 #include <iomanip>
 #include <map>
@@ -289,7 +289,7 @@ class TLSStore {
 
  private:
   std::atomic<uint64_t> version_ = 1;
-  folly::atomic_shared_ptr<T> ptr_{std::make_shared<T>()};
+  hf3fs::AtomicSharedPtr<T> ptr_{std::make_shared<T>()};
   struct Cache {
     std::shared_ptr<const T> ptr;
     uint64_t version = 0;

@@ -3,7 +3,6 @@
 #include <fmt/core.h>
 #include <iterator>
 
-#include "common/net/ib/IBDevice.h"
 #include "common/utils/LogCommands.h"
 
 namespace hf3fs::net {

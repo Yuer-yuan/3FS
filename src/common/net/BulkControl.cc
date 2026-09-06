@@ -1,33 +1,32 @@
-#include "common/net/RDMAControl.h"
+#include "common/net/BulkControl.h"
 
 #include "common/monitor/Recorder.h"
 #include "common/net/Waiter.h"
-#include "common/net/ib/IBSocket.h"
 #include "common/serde/ClientContext.h"
 #include "common/utils/Duration.h"
 
 namespace hf3fs::net {
 namespace {
 
-monitor::ValueRecorder currentRDMATransmission{"common.rdma_control.current", std::nullopt, false};
+monitor::ValueRecorder currentBulkTransmission{"common.bulk_control.current", std::nullopt, false};
 monitor::LatencyRecorder transmissionPrepareLatency{"common.transmission.prepare_latency"};
 monitor::LatencyRecorder transmissionWaitLatency{"common.transmission.wait_latency"};
 monitor::LatencyRecorder transmissionNetworkLatency{"common.transmission.network_latency"};
 
 }  // namespace
 
-CoTask<void> RDMATransmissionLimiter::co_wait() {
+CoTask<void> BulkTransmissionLimiter::co_wait() {
   co_await semaphore_.co_wait();
-  currentRDMATransmission.set(++current_);
+  currentBulkTransmission.set(++current_);
 }
 
-void RDMATransmissionLimiter::signal(Duration latency) {
-  currentRDMATransmission.set(--current_);
+void BulkTransmissionLimiter::signal(Duration latency) {
+  currentBulkTransmission.set(--current_);
   semaphore_.signal();
   transmissionNetworkLatency.addSample(latency);
 }
 
-CoTryTask<RDMATransmissionRsp> RDMAControlImpl::apply(serde::CallContext &ctx, const RDMATransmissionReq &req) {
+CoTryTask<BulkTransmissionRsp> BulkControlImpl::apply(serde::CallContext &ctx, const BulkTransmissionReq &req) {
   auto startTime = RelativeTime::now();
   co_await limiter_->co_wait();
   transmissionWaitLatency.addSample(RelativeTime::now() - startTime);
@@ -37,7 +36,7 @@ CoTryTask<RDMATransmissionRsp> RDMAControlImpl::apply(serde::CallContext &ctx, c
   } else {
     transmissionPrepareLatency.addSample(*prepareLatency);
   }
-  co_return RDMATransmissionRsp{};
+  co_return BulkTransmissionRsp{};
 }
 
 }  // namespace hf3fs::net

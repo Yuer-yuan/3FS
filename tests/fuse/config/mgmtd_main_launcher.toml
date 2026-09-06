@@ -1,7 +1,14 @@
 cluster_id = '${FS_CLUSTER}'
 
-[ib_devices]
-default_pkey_index = ${PKEY_INDEX}
+[cxl]
+enabled = true
+endpoint = 2
+endpoint_generation = 1
+manifest_path = '${CXL_MANIFEST}'
+mode = 'Attach'
+region_length = '256MB'
+region_path = '${CXL_REGION}'
+region_type = 'File'
 
 [kv_engine.fdb]
 clusterFile = '${FDB_TEST_CLUSTER}'

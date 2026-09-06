@@ -55,6 +55,7 @@ DEFINE_uint32(clientTimeoutMS, 30000, "Client timeout (milliseconds)");
 DEFINE_string(dataPaths, folly::fs::temp_directory_path().string(), "Comma or space separated list of paths");
 DEFINE_string(clientConfig, "", "Path of client config");
 DEFINE_string(serverConfig, "", "Path of server config");
+DEFINE_string(cxlConfig, "", "CXL runtime TOML for external client/cluster mode (manifest and unique endpoint)");
 DEFINE_string(statsFilePath, "./perfstats.csv", "Path of performance stats file");
 DEFINE_string(ibvDevices, "mlx5_0,mlx5_1", "Comma or space separated list of ibv devices");
 DEFINE_string(ibnetZones, "", "Comma or space separated list of IB network zones");
@@ -62,11 +63,11 @@ DEFINE_string(clusterId, "stage", "Cluster id used to connect to mgmtd");
 DEFINE_string(mgmtdEndpoints,
               "",
               "Comma or space separated list of mgmtd endpoints, "
-              "e.g. 'RDMA://10.1.1.1:1234,RDMA://10.1.1.2:1234'");
+              "e.g. 'CXL://10.1.1.1:1234,CXL://10.1.1.2:1234'");
 DEFINE_string(storageEndpoints,
               "",
               "Comma or space separated list of storage ids and endpoints, "
-              "e.g. '1@RDMA://10.1.1.1:1234,2@RDMA://10.1.1.2:1234'");
+              "e.g. '1@CXL://10.1.1.1:1234,2@CXL://10.1.1.2:1234'");
 DEFINE_string(monitorEndpoint, "", "Monitor endpoint");
 DEFINE_uint32(defaultPKeyIndex, 1, "IB default pkey index");
 
@@ -217,9 +218,11 @@ bool runBenchmarks() {
                                      FLAGS_defaultPKeyIndex,
                                      FLAGS_readBatchSize,
                                      FLAGS_writeBatchSize,
-                                     FLAGS_removeBatchSize};
+                                     FLAGS_removeBatchSize,
+                                     hf3fs::Path(FLAGS_cxlConfig)};
 
   StorageBench bench(setupConfig, benchOptions);
+  auto teardown = folly::makeGuard([&] { bench.teardown(); });
 
   if (FLAGS_clusterMode) {
     if (!bench.connect()) {
@@ -258,9 +261,8 @@ bool runBenchmarks() {
     bench.cleanup();
   }
 
-  bench.teardown();
-
-  return runOK;
+  teardown.dismiss();
+  return bench.teardown() && runOK;
 }
 
 }  // namespace hf3fs::storage::benchmark

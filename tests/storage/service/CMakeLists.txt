@@ -1,1 +1,2 @@
 target_add_test(test_storage_service test-fabric-lib)
+add_dependencies(test_storage_service cxl_storage_test_helper)

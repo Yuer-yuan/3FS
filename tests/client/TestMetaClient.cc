@@ -144,6 +144,10 @@ class TestMetaClient : public ::testing::Test {
     metaConfig_.set_dynamic_stripe_growth(2);
 
     metaClientConfig_.set_dynamic_stripe(true);
+    // This suite exercises MetaClient behavior through ClientMockContext,
+    // whose in-process service intentionally uses the retained TCP stack.
+    // Production defaults remain CXL for the phase-1 data plane.
+    metaClientConfig_.set_network_type(net::Address::Type::TCP);
 
     mgmtdClient_ = hf3fs::tests::FakeMgmtdClient::create(kChainTables, 3, 5);
     storageClientConfig_.set_implementation_type(storage::client::StorageClient::ImplementationType::InMem);
@@ -1528,6 +1532,7 @@ struct MockMetaService : public meta::MockMetaService {
 
 std::unique_ptr<MetaClient> createInjectedMeta(MetaClient::Config &config,
                                                std::shared_ptr<MockMetaService::State> state) {
+  config.set_network_type(net::Address::Type::TCP);
   auto mgmtd = hf3fs::tests::FakeMgmtdClient::create({{flat::ChainTableId(0), 8, 1}}, 5, 0);
   robin_hood::unordered_map<net::Address, serde::ClientMockContext> contextMap;
   std::set<flat::NodeId> injectNodes;

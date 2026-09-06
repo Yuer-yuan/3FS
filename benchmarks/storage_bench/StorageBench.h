@@ -14,7 +14,9 @@
 #include <fstream>
 
 #include "common/logging/LogInit.h"
+#if HF3FS_ENABLE_RDMA
 #include "common/net/ib/IBDevice.h"
+#endif
 #include "common/utils/Duration.h"
 #include "common/utils/SysResource.h"
 #include "tests/lib/UnitTestFabric.h"
@@ -64,6 +66,7 @@ class StorageBench : public test::UnitTestFabric {
     size_t readBatchSize = 0;
     size_t writeBatchSize = 0;
     size_t removeBatchSize = 0;
+    const hf3fs::Path cxlConfig = {};
   };
 
  private:
@@ -86,6 +89,9 @@ class StorageBench : public test::UnitTestFabric {
   std::vector<size_t> numCreatedChunks_;
   size_t totalNumChunks_;
   double totalChunkGiB_;
+  bool externalCxlStarted_ = false;
+  bool tornDown_ = false;
+  bool teardownPassed_ = false;
 
  public:
   StorageBench(const test::SystemSetupConfig &setupConfig, const Options &options)
@@ -102,6 +108,16 @@ class StorageBench : public test::UnitTestFabric {
     if (benchOptions_.readBatchSize == 0) benchOptions_.readBatchSize = benchOptions_.batchSize;
     if (benchOptions_.writeBatchSize == 0) benchOptions_.writeBatchSize = benchOptions_.batchSize;
     if (benchOptions_.removeBatchSize == 0) benchOptions_.removeBatchSize = benchOptions_.batchSize;
+  }
+
+  ~StorageBench() {
+    if (!tornDown_) {
+      try {
+        teardown();
+      } catch (const std::exception &error) {
+        ADD_FAILURE() << "Storage benchmark teardown: " << error.what();
+      }
+    }
   }
 
   void generateChunkIds() {
@@ -142,7 +158,7 @@ class StorageBench : public test::UnitTestFabric {
   bool connect() {
     XLOGF(INFO, "Start to connect...");
 
-    if (!setupIBSock()) {
+    if (!setupTransport(true)) {
       return false;
     }
 
@@ -299,7 +315,11 @@ class StorageBench : public test::UnitTestFabric {
     totalNumChunks_ = chainIds_.size() * benchOptions_.numCoroutines * benchOptions_.numChunks;
     totalChunkGiB_ = (double)totalNumChunks_ * setupConfig_.chunk_size() / 1_GB;
     clientConfig_.retry().set_max_retry_time(Duration(std::chrono::milliseconds(benchOptions_.clientTimeoutMS)));
+#if HF3FS_ENABLE_RDMA
     clientConfig_.net_client().io_worker().ibsocket().set_sl(setupConfig_.service_level());
+#else
+    configureCxlClients();
+#endif
 
     XLOGF(INFO, "Creating storage client...");
     storageClient_ = client::StorageClient::create(clientId_, clientConfig_, *mgmtdForClient_);
@@ -307,7 +327,16 @@ class StorageBench : public test::UnitTestFabric {
     return true;
   }
 
-  bool setupIBSock() {
+  void configureCxlClients() {
+    for (auto *config : {&netClientConfig_, &clientConfig_.net_client(), &clientConfig_.net_client_for_updates()}) {
+      config->io_worker().cxlsocket().set_queue_depth(8);
+      config->io_worker().cxlsocket().set_cell_bytes(65536);
+    }
+  }
+
+  bool setupTransport(bool external) {
+#if HF3FS_ENABLE_RDMA
+    (void)external;
     XLOGF(WARN, "Setting up IB socket...");
 
     std::vector<net::IBConfig::Subnet> subnets;
@@ -349,16 +378,44 @@ class StorageBench : public test::UnitTestFabric {
     }
 
     return true;
+#else
+    configureCxlClients();
+    if (!external) return true;  // UnitTestFabric owns its exec fabric.
+    if (setupConfig_.start_storage_server() && !setupConfig_.storage_endpoints().empty()) {
+      XLOG(ERR, "External CXL storage endpoints require --clientMode; each service needs its own manifest endpoint");
+      return false;
+    }
+    if (benchOptions_.cxlConfig.empty()) {
+      XLOG(ERR, "External CXL benchmark requires --cxlConfig with a manifest and unique endpoint");
+      return false;
+    }
+    net::TransportRuntime::Config config;
+    auto loaded = config.atomicallyUpdate(benchOptions_.cxlConfig, false);
+    if (!loaded || !config.enabled() || config.mode() != net::cxl::CxlFabric::StartMode::Attach) {
+      XLOG(ERR, "Invalid CXL runtime config: enabled Attach mode is required");
+      return false;
+    }
+    auto started = net::TransportRuntime::startConfigured(config);
+    if (!started) {
+      XLOGF(ERR, "Cannot attach benchmark CXL endpoint: {}", started.error());
+      return false;
+    }
+    externalCxlStarted_ = true;
+    return true;
+#endif
   }
 
   bool setup() {
     XLOGF(WARN, "Setting up benchmark...");
 
-    if (!setupIBSock()) {
+    if (!setupTransport(!setupConfig_.start_storage_server() || !setupConfig_.storage_endpoints().empty())) {
       return false;
     }
 
     bool ok = setUpStorageSystem();
+#if !HF3FS_ENABLE_RDMA
+    configureCxlClients();
+#endif
 
     totalNumChunks_ = chainIds_.size() * benchOptions_.numCoroutines * benchOptions_.numChunks;
     totalChunkGiB_ = (double)totalNumChunks_ * setupConfig_.chunk_size() / 1_GB;
@@ -367,9 +424,24 @@ class StorageBench : public test::UnitTestFabric {
     return ok;
   }
 
-  void teardown() {
-    tearDownStorageSystem();
+  bool teardown() {
+    if (tornDown_) return teardownPassed_;
+    bool ok = tearDownStorageSystem();
+#if HF3FS_ENABLE_RDMA
     net::IBManager::stop();
+#else
+    if (externalCxlStarted_) {
+      externalCxlStarted_ = false;
+      auto stopped = net::TransportRuntime::stopCxl();
+      if (!stopped) {
+        XLOGF(ERR, "Benchmark CXL retirement failed: {}", stopped.error());
+        ok = false;
+      }
+    }
+#endif
+    tornDown_ = true;
+    teardownPassed_ = ok;
+    return ok;
   }
 
   void printThroughput(hf3fs::SteadyClock::duration elapsedMicro, double totalGiB) {

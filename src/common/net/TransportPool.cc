@@ -85,42 +85,42 @@ TransportSet::TransportMap::iterator TransportSet::erase(TransportMap::iterator 
 TransportPool::~TransportPool() { dropConnections(true, true); }
 
 void TransportPool::add(TransportPtr tr) {
-  auto addr = tr->serverAddr();
+  auto endpoint = tr->serverEndpoint();
   shards_.withLock(
       [&](Map &map) {
-        auto &set = map[addr];
+        auto &set = map[endpoint];
         set.add(std::move(tr), 0);
-        if (addr.ip == 0) {
+        if (endpoint.address.ip == 0) {
           acceptedCountRecorder.set(++acceptedCount);
         } else {
           connectedCountRecorder.set(++connectedCount);
         }
       },
-      addr);
+      endpoint);
 }
 
 void TransportPool::remove(TransportPtr tr) {
-  auto addr = tr->serverAddr();
+  auto endpoint = tr->serverEndpoint();
   shards_.withLock(
       [&](Map &map) {
-        auto &set = map[addr];
+        auto &set = map[endpoint];
         bool succ = set.remove(std::move(tr));
         if (succ) {
-          if (addr.ip == 0) {
+          if (endpoint.address.ip == 0) {
             acceptedCountRecorder.set(--acceptedCount);
           } else {
             connectedCountRecorder.set(--connectedCount);
           }
         }
       },
-      addr);
+      endpoint);
 }
 
-std::pair<TransportPtr, bool> TransportPool::get(Address addr, IOWorker &io_worker) {
+std::pair<TransportPtr, bool> TransportPool::get(ServiceEndpoint endpoint, IOWorker &io_worker) {
   uint32_t idx = folly::Random::rand32() % config_.max_connections();
 
   // 1. try to find transport in thread local cache.
-  auto &cached = (*tlsCache_)[TransportCacheKey{addr, idx}];
+  auto &cached = (*tlsCache_)[TransportCacheKey{endpoint, idx}];
   auto transport = cached.lock();
   if (LIKELY(transport != nullptr && !transport->invalidated())) {
     return std::make_pair(std::move(transport), false);
@@ -131,7 +131,7 @@ std::pair<TransportPtr, bool> TransportPool::get(Address addr, IOWorker &io_work
   return shards_.withLock(
       [&](Map &map) {
         // 2. try to find transport in pool.
-        auto &set = map[addr];
+        auto &set = map[endpoint];
         transport = set.acquire(idx);
         if (LIKELY(transport != nullptr)) {
           cached = transport;
@@ -139,9 +139,12 @@ std::pair<TransportPtr, bool> TransportPool::get(Address addr, IOWorker &io_work
         }
 
         // 3. create a new transport. still protected by mutex.
-        transport = Transport::create(addr, io_worker);
+        transport = Transport::create(endpoint, io_worker);
+        if (UNLIKELY(transport == nullptr)) {
+          return std::make_pair(TransportPtr{}, false);
+        }
         set.add(transport, idx);
-        if (addr.ip == 0) {
+        if (endpoint.address.ip == 0) {
           acceptedCountRecorder.set(++acceptedCount);
         } else {
           connectedCountRecorder.set(++connectedCount);
@@ -149,7 +152,7 @@ std::pair<TransportPtr, bool> TransportPool::get(Address addr, IOWorker &io_work
         cached = transport;
         return std::make_pair(std::move(transport), true);
       },
-      addr);
+      endpoint);
 }
 
 void TransportPool::dropConnections(bool dropAll /* = true */, bool dropIncome /* = false */) {
@@ -158,10 +161,10 @@ void TransportPool::dropConnections(bool dropAll /* = true */, bool dropIncome /
     uint32_t removeConnected{};
     shards_.iterate([&](Map &map) {
       for (auto it = map.begin(); it != map.end();) {
-        if (it->first.ip == 0 && !dropIncome) {
+        if (it->first.address.ip == 0 && !dropIncome) {
           ++it;  // skip incoming connections.
         } else {
-          if (it->first.ip == 0) {
+          if (it->first.address.ip == 0) {
             removeAccepted += it->second.transports().size();
           } else {
             removeConnected += it->second.transports().size();
@@ -176,37 +179,47 @@ void TransportPool::dropConnections(bool dropAll /* = true */, bool dropIncome /
 }
 
 void TransportPool::dropConnections(Address addr) {
+  dropConnections(ServiceEndpoint{addr, ServicePlane::Control});
+  dropConnections(ServiceEndpoint{addr, ServicePlane::Data});
+}
+
+void TransportPool::dropConnections(ServiceEndpoint endpoint) {
   shards_.withLock(
       [&](Map &map) {
-        auto it = map.find(addr);
+        auto it = map.find(endpoint);
         if (it == map.end()) {
           return;
         }
         auto removed = it->second.dropAll();
-        if (addr.ip == 0) {
+        if (endpoint.address.ip == 0) {
           acceptedCountRecorder.set(acceptedCount -= removed);
         } else {
           connectedCountRecorder.set(connectedCount -= removed);
         }
       },
-      addr);
+      endpoint);
 }
 
 void TransportPool::checkConnections(Address addr, Duration expiredTime) {
+  checkConnections(ServiceEndpoint{addr, ServicePlane::Control}, expiredTime);
+  checkConnections(ServiceEndpoint{addr, ServicePlane::Data}, expiredTime);
+}
+
+void TransportPool::checkConnections(ServiceEndpoint endpoint, Duration expiredTime) {
   shards_.withLock(
       [&](Map &map) {
-        auto it = map.find(addr);
+        auto it = map.find(endpoint);
         if (it == map.end()) {
           return;
         }
         auto removed = it->second.checkAll(expiredTime);
-        if (addr.ip == 0) {
+        if (endpoint.address.ip == 0) {
           acceptedCountRecorder.set(acceptedCount -= removed);
         } else {
           connectedCountRecorder.set(connectedCount -= removed);
         }
       },
-      addr);
+      endpoint);
 }
 
 }  // namespace hf3fs::net

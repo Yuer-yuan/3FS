@@ -1,11 +1,11 @@
 #pragma once
 
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 #include <optional>
 
+#include "common/net/BulkControl.h"
 #include "common/net/IOWorker.h"
 #include "common/net/Processor.h"
-#include "common/net/RDMAControl.h"
 #include "common/net/ThreadPoolGroup.h"
 #include "common/serde/ClientContext.h"
 #include "common/utils/ConfigBase.h"
@@ -19,13 +19,13 @@ class Client {
     CONFIG_OBJ(thread_pool, ThreadPoolGroup::Config);
     CONFIG_OBJ(processor, Processor::Config);
     CONFIG_OBJ(io_worker, IOWorker::Config);
-    CONFIG_OBJ(rdma_control, RDMAControlImpl::Config);
+    CONFIG_OBJ(bulk_control, BulkControlImpl::Config);
     CONFIG_HOT_UPDATED_ITEM(default_timeout, kClientRequestDefaultTimeout);
     CONFIG_HOT_UPDATED_ITEM(default_log_long_running_threshold, kClientRequestLogLongRunningThreshold);
     CONFIG_HOT_UPDATED_ITEM(default_send_retry_times, kDefaultMaxRetryTimes, ConfigCheckers::checkPositive);
     CONFIG_HOT_UPDATED_ITEM(default_compression_level, 0u);
     CONFIG_HOT_UPDATED_ITEM(default_compression_threshold, 128_KB);
-    CONFIG_HOT_UPDATED_ITEM(enable_rdma_control, false);
+    CONFIG_HOT_UPDATED_ITEM(enable_bulk_control, false);
     CONFIG_HOT_UPDATED_ITEM(force_use_tcp, false);
     CONFIG_HOT_UPDATED_ITEM(default_report_metrics, false);
   };
@@ -42,7 +42,8 @@ class Client {
 
   Result<Void> start(const std::string &name = "Cli") {
     RETURN_AND_LOG_ON_ERROR(processor_.start(name));
-    RETURN_AND_LOG_ON_ERROR(serdeServices_.addService(std::make_unique<RDMAControlImpl>(config_.rdma_control()), true));
+    RETURN_AND_LOG_ON_ERROR(
+        serdeServices_.addService(std::make_unique<BulkControlImpl>(config_.bulk_control()), {ServicePlane::Data}));
     return ioWorker_.start(name);
   }
 
@@ -71,7 +72,7 @@ class Client {
     options->logLongRunningThreshold = config_.default_log_long_running_threshold();
     options->sendRetryTimes = config_.default_send_retry_times();
     options->compression = {config_.default_compression_level(), config_.default_compression_threshold()};
-    options->enableRDMAControl = config_.enable_rdma_control();
+    options->enableBulkControl = config_.enable_bulk_control();
     options->reportMetrics = config_.default_report_metrics();
     options_ = std::move(options);
   }
@@ -84,7 +85,7 @@ class Client {
   Processor processor_;
   IOWorker ioWorker_;
   std::unique_ptr<ConfigCallbackGuard> clientConfigGuard_;
-  folly::atomic_shared_ptr<const CoreRequestOptions> options_{std::make_shared<CoreRequestOptions>()};
+  hf3fs::AtomicSharedPtr<const CoreRequestOptions> options_{std::make_shared<CoreRequestOptions>()};
 };
 
 }  // namespace hf3fs::net

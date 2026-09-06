@@ -59,8 +59,8 @@ TEST(TestChunkEngine, ReadWrite) {
     ASSERT_OK(updateWorker.start(1));
 
     BufferPool::Config bufferPoolConfig;
-    bufferPoolConfig.set_rdmabuf_count(4);
-    bufferPoolConfig.set_big_rdmabuf_count(1);
+    bufferPoolConfig.set_buffer_count(4);
+    bufferPoolConfig.set_big_buffer_count(1);
     BufferPool pool(bufferPoolConfig);
     ASSERT_OK(pool.init(executor));
 
@@ -165,7 +165,7 @@ TEST(TestChunkEngine, ReadWrite) {
         folly::coro::blockingWait(job->complete());
         ASSERT_TRUE(job->front().result().lengthInfo);
         ASSERT_EQ(job->front().result().lengthInfo.value(), chunkSize);
-        std::string_view out{(const char *)job->front().state().localbuf.ptr(), chunkSize};
+        std::string_view out{(const char *)job->front().state().localbuf.data(), chunkSize};
         ASSERT_EQ(out, dataBytes);
       }
 

@@ -14,6 +14,7 @@ int main(int argc, char *argv[]) {
 #include "FuseMainLoop.h"
 #include "FuseOps.h"
 #include "common/logging/LogInit.h"
+#include "common/net/TransportRuntime.h"
 
 using namespace hf3fs;
 using namespace hf3fs::fuse;
@@ -41,9 +42,23 @@ int main(int argc, char *argv[]) {
   FuseConfig hf3fsConfig;
   hf3fsConfig.init(&argc, &argv);
 
-  auto ibResult = net::IBManager::start(hf3fsConfig.ib_devices());
-  XLOGF_IF(FATAL, !ibResult, "Failed to start IBManager: {}", ibResult.error());
-  SCOPE_EXIT { hf3fs::net::IBManager::stop(); };
+  if (hf3fsConfig.cxl().enabled()) {
+    auto cxlResult = net::TransportRuntime::startConfigured(hf3fsConfig.cxl());
+    XLOGF_IF(FATAL, !cxlResult, "Failed to start CXL transport runtime: {}", cxlResult.error());
+  } else {
+#if HF3FS_ENABLE_RDMA
+    auto ibResult = net::IBManager::start(hf3fsConfig.ib_devices());
+    XLOGF_IF(FATAL, !ibResult, "Failed to start IBManager: {}", ibResult.error());
+#else
+    XLOGF(FATAL, "CXL transport must be enabled because RDMA support is disabled in this build");
+#endif
+  }
+  SCOPE_EXIT {
+    (void)net::TransportRuntime::stopCxl();
+#if HF3FS_ENABLE_RDMA
+    net::IBManager::stop();
+#endif
+  };
 
   auto logConfigStr = logging::generateLogConfig(hf3fsConfig.log(), String("hf3fs_fuse"));
   XLOGF(INFO, "LogConfig: {}", logConfigStr);

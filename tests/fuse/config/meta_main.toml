@@ -13,12 +13,16 @@ file_path = '${META_LOG}'
 [server.base.groups.listener]
 listen_port = ${META_PORT}
 
+[server.base.groups.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [[server.base.groups]]
 [server.base.groups.listener]
 listen_port = 0
 
 [server.mgmtd_client]
-mgmtd_server_addresses = [ 'RDMA://${ADDRESS}:${MGMTD_PORT}' ]
+mgmtd_server_addresses = [ 'CXL://${ADDRESS}:${MGMTD_PORT}' ]
 auto_extend_client_session_interval = '2s'
 auto_heartbeat_interval = '2s'
 auto_refresh_interval = '2s'
@@ -38,7 +42,19 @@ idempotent_rename = true
 [server.meta.gc]
 gc_file_delay = '5s'
 
+[server.background_client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
+[server.storage_client.net_client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
+[server.storage_client.net_client_for_updates.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [server.fdb]
 casual_read_risky = true
 clusterFile = '${FDB_TEST_CLUSTER}'
-externalClientPath = '/lib/libfdb_c.so'
+externalClientPath = '${FDB_CLIENT_LIB}'

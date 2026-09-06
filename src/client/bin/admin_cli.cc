@@ -12,7 +12,10 @@
 #include "client/mgmtd/MgmtdClientForAdmin.h"
 #include "common/logging/LogInit.h"
 #include "common/net/Client.h"
+#include "common/net/TransportRuntime.h"
+#if HF3FS_ENABLE_RDMA
 #include "common/net/ib/IBDevice.h"
+#endif
 #include "common/utils/ConfigBase.h"
 #include "fdb/FDBContext.h"
 #include "fdb/FDBKVEngine.h"
@@ -41,7 +44,10 @@ class UserConfig : public ConfigBase<UserConfig> {
 
 class Config : public ConfigBase<Config> {
   CONFIG_OBJ(client, net::Client::Config);
+  CONFIG_OBJ(cxl, net::TransportRuntime::Config);
+#if HF3FS_ENABLE_RDMA
   CONFIG_OBJ(ib_devices, net::IBDevice::Config);
+#endif
   CONFIG_ITEM(cluster_id, "");
   CONFIG_OBJ(user_info, UserConfig);
   CONFIG_ITEM(log, "DBG:normal; normal=file:path=cli.log,async=true,sync_level=ERR", ConfigCheckers::checkNotEmpty);
@@ -101,14 +107,28 @@ int main(int argc, char **argv) {
   std::shared_ptr<CoreClient> coreClient;
   auto clientId = ClientId::random();
 
-  auto ensureIbInited = [&] {
+  auto ensureDataPlaneInited = [&] {
     [[maybe_unused]] static bool inited = [&] {
-      auto ibResult = hf3fs::net::IBManager::start(config.ib_devices());
-      XLOGF_IF(FATAL, !ibResult, "Failed to start IBManager: {}.", ibResult.error().describe());
+      if (config.cxl().enabled()) {
+        auto cxlResult = hf3fs::net::TransportRuntime::startConfigured(config.cxl());
+        XLOGF_IF(FATAL, !cxlResult, "Failed to start CXL transport runtime: {}.", cxlResult.error().describe());
+      } else {
+#if HF3FS_ENABLE_RDMA
+        auto ibResult = hf3fs::net::IBManager::start(config.ib_devices());
+        XLOGF_IF(FATAL, !ibResult, "Failed to start IBManager: {}.", ibResult.error().describe());
+#else
+        XLOGF(FATAL, "CXL transport must be enabled because RDMA support is disabled in this build");
+#endif
+      }
       return true;
     }();
   };
-  SCOPE_EXIT { hf3fs::net::IBManager::stop(); };
+  SCOPE_EXIT {
+    (void)hf3fs::net::TransportRuntime::stopCxl();
+#if HF3FS_ENABLE_RDMA
+    hf3fs::net::IBManager::stop();
+#endif
+  };
 
   auto monitorResult = hf3fs::monitor::Monitor::start(config.monitor());
   XLOGF_IF(CRITICAL, !monitorResult, "Start monitor failed: {}", monitorResult.error().describe());
@@ -116,7 +136,7 @@ int main(int argc, char **argv) {
 
   auto ensureClient = [&] {
     [[maybe_unused]] static bool inited = [&] {
-      ensureIbInited();
+      ensureDataPlaneInited();
       client = std::make_shared<net::Client>(config.client());
       client->start();
       return true;

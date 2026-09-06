@@ -40,7 +40,7 @@ class PriorityCoroutinePool {
   Result<Void> start(Handler handler, CPUExecutorGroup &grp) {
     auto coroutines = config_.coroutines_num();
     for (auto i = 0u; i < coroutines; ++i) {
-      futures_.push_back(run(handler, i).scheduleOn(&grp.pickNext()).start());
+      futures_.push_back(run(handler).scheduleOn(&grp.pickNext()).start());
     }
     return Void{};
   }
@@ -61,7 +61,7 @@ class PriorityCoroutinePool {
   void enqueue(Job job, int8_t priority) { queue_.addWithPriority(std::move(job), priority); }
 
  private:
-  CoTask<void> run(Handler handler, size_t queueIndex) {
+  CoTask<void> run(Handler handler) {
     while (true) {
       auto result = co_await co_awaitTry(co_withCancellation(cancel_.getToken(), queue_.co_dequeue()));
       if (UNLIKELY(result.template hasException<OperationCancelled>())) {

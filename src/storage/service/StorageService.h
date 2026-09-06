@@ -21,13 +21,13 @@ class StorageService : public serde::ServiceWrapper<StorageService, storage::Sto
   CoTryTask<WriteRsp> write(serde::CallContext &ctx, const WriteReq &req) {
     reportUpdateQueueLatency(ctx);
     ServiceRequestContext requestCtx{"write", req.tag, req.retryCount, req.userInfo, req.debugFlags};
-    co_return co_await storageOperator_.write(requestCtx, req, ctx.transport()->ibSocket());
+    co_return co_await storageOperator_.write(requestCtx, req, &ctx);
   }
 
   CoTryTask<UpdateRsp> update(serde::CallContext &ctx, const UpdateReq &req) {
     reportUpdateQueueLatency(ctx);
     ServiceRequestContext requestCtx{"update", req.tag, req.retryCount, req.userInfo, req.debugFlags};
-    co_return co_await storageOperator_.update(requestCtx, req, ctx.transport()->ibSocket());
+    co_return co_await storageOperator_.update(requestCtx, req, &ctx);
   }
 
   CoTryTask<QueryLastChunkRsp> queryLastChunk(serde::CallContext &ctx, const QueryLastChunkReq &req) {

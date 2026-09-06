@@ -4,6 +4,10 @@
 #include "client/mgmtd/MgmtdClientForClient.h"
 #include "client/storage/StorageClient.h"
 #include "common/app/ApplicationBase.h"
+#include "common/net/TransportRuntime.h"
+#if HF3FS_ENABLE_RDMA
+#include "common/net/ib/IBDevice.h"
+#endif
 #include "common/utils/ConfigBase.h"
 #include "common/utils/CoroutinesPool.h"
 
@@ -16,7 +20,10 @@ struct FuseConfig : public ConfigBase<FuseConfig> {
   CONFIG_ITEM(token_file, "");
   CONFIG_ITEM(mountpoint, "");
   CONFIG_ITEM(allow_other, true);
+  CONFIG_OBJ(cxl, net::TransportRuntime::Config);
+#if HF3FS_ENABLE_RDMA
   CONFIG_OBJ(ib_devices, net::IBDevice::Config);
+#endif
   CONFIG_OBJ(log, logging::LogConfig);
   CONFIG_OBJ(monitor, monitor::Monitor::Config);
 #endif
@@ -44,7 +51,15 @@ struct FuseConfig : public ConfigBase<FuseConfig> {
   CONFIG_ITEM(iov_limit, 1_MB);
   CONFIG_ITEM(io_jobq_size, 1024);
   CONFIG_ITEM(batch_io_coros, 128);
-  CONFIG_ITEM(rdma_buf_pool_size, 1024);
+  CONFIG_ITEM(shared_buf_pool_size, 1024);
+  CONFIG_ITEM(rdma_buf_pool_size, 0);  // deprecated config alias
+
+ public:
+  uint32_t effectiveSharedBufferPoolSize() const {
+    return rdma_buf_pool_size() ? rdma_buf_pool_size() : shared_buf_pool_size();
+  }
+
+ private:
   CONFIG_ITEM(time_granularity, 1_s);
   CONFIG_HOT_UPDATED_ITEM(check_rmrf, true);
   CONFIG_ITEM(notify_inval_threads, 32);

@@ -5,7 +5,10 @@
 #include "client/mgmtd/MgmtdClientForClient.h"
 #include "common/logging/LogInit.h"
 #include "common/net/Client.h"
+#include "common/net/TransportRuntime.h"
+#if HF3FS_ENABLE_RDMA
 #include "common/net/ib/IBDevice.h"
+#endif
 #include "common/utils/ConfigBase.h"
 #include "common/utils/SysResource.h"
 #include "stubs/common/RealStubFactory.h"
@@ -28,7 +31,10 @@ class Config : public ConfigBase<Config> {
   CONFIG_OBJ(mgmtd, MgmtdClientForClient::Config);
 
   CONFIG_OBJ(client, net::Client::Config);
+  CONFIG_OBJ(cxl, net::TransportRuntime::Config);
+#if HF3FS_ENABLE_RDMA
   CONFIG_OBJ(ib_devices, net::IBDevice::Config);
+#endif
 
   CONFIG_ITEM(cluster_id, "");
 };
@@ -51,9 +57,23 @@ int main(int argc, char **argv) {
   auto initResult = config.init(&argc, &argv);
   XLOGF_IF(FATAL, !initResult, "Load config from flags failed with {}", initResult.error().describe());
 
-  auto ibResult = hf3fs::net::IBManager::start(config.ib_devices());
-  XLOGF_IF(FATAL, !ibResult, "Failed to start IBManager: {}.", ibResult.error().describe());
-  SCOPE_EXIT { hf3fs::net::IBManager::stop(); };
+  if (config.cxl().enabled()) {
+    auto cxlResult = hf3fs::net::TransportRuntime::startConfigured(config.cxl());
+    XLOGF_IF(FATAL, !cxlResult, "Failed to start CXL transport runtime: {}.", cxlResult.error().describe());
+  } else {
+#if HF3FS_ENABLE_RDMA
+    auto ibResult = hf3fs::net::IBManager::start(config.ib_devices());
+    XLOGF_IF(FATAL, !ibResult, "Failed to start IBManager: {}.", ibResult.error().describe());
+#else
+    XLOGF(FATAL, "CXL transport must be enabled because RDMA support is disabled in this build");
+#endif
+  }
+  SCOPE_EXIT {
+    (void)hf3fs::net::TransportRuntime::stopCxl();
+#if HF3FS_ENABLE_RDMA
+    hf3fs::net::IBManager::stop();
+#endif
+  };
 
   net::Client client(config.client());
   client.start();

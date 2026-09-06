@@ -1,0 +1,8 @@
+{
+  "package": "libclang-rt-18-dev",
+  "version": "1:18.1.3-1",
+  "architecture": "riscv64",
+  "url": "https://ports.ubuntu.com/ubuntu-ports/pool/universe/l/llvm-toolchain-18/libclang-rt-18-dev_18.1.3-1_riscv64.deb",
+  "size": 4499980,
+  "sha256": "a0882ae309252a5eeae367ca7f0b5e28386664ed37246edb6450eb40d5a6f3fe"
+}

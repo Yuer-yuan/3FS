@@ -7,6 +7,7 @@
 #include "common/net/Client.h"
 #include "common/net/Server.h"
 #include "common/net/Transport.h"
+#include "common/net/TransportEvidence.h"
 #include "common/net/WriteItem.h"
 #include "common/net/sync/Client.h"
 #include "common/serde/CallContext.h"
@@ -20,7 +21,9 @@
 #include "common/utils/Thief.h"
 #include "common/utils/TypeTraits.h"
 #include "tests/GtestHelpers.h"
+#if HF3FS_ENABLE_RDMA
 #include "tests/common/net/ib/SetupIB.h"
+#endif
 
 namespace hf3fs::serde::test {
 namespace {
@@ -96,7 +99,11 @@ struct FakeClient {
   }
 };
 
+#if HF3FS_ENABLE_RDMA
 class TestService : public net::test::SetupIB {};
+#else
+class TestService : public ::testing::Test {};
+#endif
 
 TEST_F(TestService, Client) {
   FakeClient ctx;
@@ -247,24 +254,85 @@ struct RealService : public serde::ServiceWrapper<RealService<Context>, DemoServ
 
 TEST_F(TestService, Normal) {
   Services services;
-  ASSERT_OK(services.addService(std::make_unique<RealService<>>(), false));
+  ASSERT_OK(services.addService(std::make_unique<RealService<>>(), {net::ServicePlane::Control}));
 
   for (auto o = 0; o < 2; ++o) {
-    auto &service = services.getServiceById(RealService<>::kServiceID + o, false);
+    auto &service = services.getServiceById(RealService<>::kServiceID + o, net::ServicePlane::Control);
     ASSERT_NE(service.getter, nullptr);
 
     for (auto i = 0; i < 100; ++i) {
       if (o == 0 && 1 <= i && i <= 4) {
         ASSERT_NE(service.getter(i), nullptr);
-      } else {
+      } else if (o == 0) {
         ASSERT_EQ(service.getter(i), &CallContext::invalidId);
+      } else {
+        ASSERT_EQ(service.getter(i), &CallContext::invalidService);
       }
     }
   }
 }
 
+TEST(TestServices, ExplicitPlanesShareOneObject) {
+  Services services;
+  auto impl = std::make_unique<RealService<>>();
+  auto *pointer = impl.get();
+  ASSERT_OK(services.addService(std::move(impl), {net::ServicePlane::Control, net::ServicePlane::Data}));
+
+  auto &control = services.getServiceById(RealService<>::kServiceID, net::ServicePlane::Control);
+  auto &data = services.getServiceById(RealService<>::kServiceID, net::ServicePlane::Data);
+  EXPECT_EQ(control.object, pointer);
+  EXPECT_EQ(data.object, pointer);
+  EXPECT_FALSE(control.alive.owner_before(data.alive));
+  EXPECT_FALSE(data.alive.owner_before(control.alive));
+}
+
+TEST(TestServices, EmptyPlaneSetIsRejected) {
+  Services services;
+  auto result = services.addService(std::make_unique<RealService<>>(), {});
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().code(), StatusCode::kInvalidArg);
+}
+
+TEST(TestServices, DataServiceIsHiddenFromBootstrapControlPlane) {
+  Services services;
+  ASSERT_OK(services.addService(std::make_unique<RealService<>>(), {net::ServicePlane::Data}));
+
+  auto &control = services.getServiceById(RealService<>::kServiceID, net::ServicePlane::Control);
+  auto &data = services.getServiceById(RealService<>::kServiceID, net::ServicePlane::Data);
+  EXPECT_EQ(control.object, nullptr);
+  EXPECT_EQ(data.object == nullptr, false);
+}
+
+TEST(TestServices, BootstrapControlTransportRejectsDataService) {
+  const auto before = net::TransportEvidence::process().snapshot();
+  net::Server::Config serverConfig;
+  serverConfig.groups(0).set_network_type(net::Address::TCP);
+  net::Server server(serverConfig);
+  ASSERT_OK(server.groups().front()->addSerdeService(std::make_unique<RealService<>>(), net::ServicePlane::Data));
+  ASSERT_OK(server.setup());
+  ASSERT_OK(server.start());
+
+  net::Client::Config clientConfig;
+  net::Client client(clientConfig);
+  ASSERT_OK(client.start());
+  auto ctx = client.serdeCtx(server.groups().front()->addressList().front());
+  auto result = folly::coro::blockingWait(DemoService<>::echo(ctx, EchoReq{"must-not-dispatch"}));
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().code(), RPCCode::kInvalidServiceID);
+
+  client.stopAndJoin();
+  server.stopAndJoin();
+  const auto after = net::TransportEvidence::process().snapshot();
+  EXPECT_GT(after[net::TransportEvidence::BootstrapServingBytes], before[net::TransportEvidence::BootstrapServingBytes]);
+  EXPECT_EQ(after[net::TransportEvidence::TcpReceiveBytes] - before[net::TransportEvidence::TcpReceiveBytes],
+            after[net::TransportEvidence::BootstrapServingBytes] - before[net::TransportEvidence::BootstrapServingBytes]);
+}
+
 TEST_F(TestService, AddSerdeService) {
   net::Server::Config config;
+#if !HF3FS_ENABLE_RDMA
+  config.groups(0).set_network_type(net::Address::TCP);
+#endif
   net::Server server(config);
   ASSERT_OK(server.setup());
   ASSERT_OK(server.addSerdeService(std::make_unique<RealService<>>()));
@@ -278,7 +346,7 @@ TEST_F(TestService, CallContext) {
   auto pointer = service.get();
 
   Services services;
-  ASSERT_OK(services.addService(std::move(service), false));
+  ASSERT_OK(services.addService(std::move(service), {net::ServicePlane::Control}));
 
   EchoReq req;
   req.value = "hello";
@@ -291,6 +359,9 @@ TEST_F(TestService, CallContext) {
   ASSERT_OK(serde::deserialize(recv, bytes));
 
   net::Server::Config config;
+#if !HF3FS_ENABLE_RDMA
+  config.groups(0).set_network_type(net::Address::TCP);
+#endif
   net::Server server(config);
   ASSERT_OK(server.setup());
   ASSERT_OK(server.start());
@@ -298,21 +369,21 @@ TEST_F(TestService, CallContext) {
 
   {
     ASSERT_EQ(pointer->cnt, 0);
-    CallContext ctx(recv, tr, services.getServiceById(recv.serviceId, false));
+    CallContext ctx(recv, tr, services.getServiceById(recv.serviceId, net::ServicePlane::Control));
     folly::coro::blockingWait(ctx.handle());
     ASSERT_EQ(pointer->cnt, 1);
   }
 
   {
     recv.methodId = 0;
-    CallContext ctx(recv, tr, services.getServiceById(recv.serviceId, false));
+    CallContext ctx(recv, tr, services.getServiceById(recv.serviceId, net::ServicePlane::Control));
     folly::coro::blockingWait(ctx.handle());
     ASSERT_EQ(pointer->cnt, 1);
   }
 
   {
     recv.serviceId = 0;
-    CallContext ctx(recv, tr, services.getServiceById(recv.serviceId, false));
+    CallContext ctx(recv, tr, services.getServiceById(recv.serviceId, net::ServicePlane::Control));
     folly::coro::blockingWait(ctx.handle());
     ASSERT_EQ(pointer->cnt, 1);
   }
@@ -326,7 +397,14 @@ TEST_F(TestService, ClientContext) {
   auto pointer = service.get();
 
   // 2. start server.
-  auto ctx = serde::ClientMockContext::create(std::move(service), net::Address::RDMA);
+  auto ctx = serde::ClientMockContext::create(
+      std::move(service),
+#if HF3FS_ENABLE_RDMA
+      net::Address::RDMA
+#else
+      net::Address::TCP
+#endif
+  );
 
   // 4. call client ctx.
   {

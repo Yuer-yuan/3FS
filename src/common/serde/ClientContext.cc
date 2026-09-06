@@ -1,3 +1,4 @@
+#include "common/utils/AtomicSharedPtr.h"
 #include "common/serde/ClientContext.h"
 
 #include "common/net/RequestOptions.h"
@@ -44,7 +45,7 @@ monitor::LatencyRecorder &getClientPostRecvLatencyRecorder() {
   return recorder;
 }
 
-const folly::atomic_shared_ptr<const net::CoreRequestOptions> kDefaultOptions{
+const hf3fs::AtomicSharedPtr<const net::CoreRequestOptions> kDefaultOptions{
     std::make_shared<net::CoreRequestOptions>()};
 
 }  // namespace

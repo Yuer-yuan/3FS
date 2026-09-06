@@ -102,41 +102,25 @@ proc_thread_pool_stratetry = 'SHARED_QUEUE'
 [[server.base.groups]]
 check_connections_interval = '1min'
 connection_expiration_time = '1day'
-network_type = 'RDMA'
+network_type = 'CXL'
+service_plane = 'Data'
 services = [ 'StorageSerde' ]
 use_independent_thread_pool = false
 
 [server.base.groups.io_worker]
 num_event_loop = 1
-rdma_connect_timeout = '5s'
-read_write_rdma_in_event_thread = false
+data_connect_timeout = '5s'
+read_write_data_in_event_thread = false
 read_write_tcp_in_event_thread = false
 tcp_connect_timeout = '1s'
 wait_to_retry_send = '100ms'
 
+[server.base.groups.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [server.base.groups.io_worker.connect_concurrency_limiter]
 max_concurrency = 4
-
-[server.base.groups.io_worker.ibsocket]
-buf_ack_batch = 8
-buf_signal_batch = 8
-buf_size = 16384
-drain_timeout = '5s'
-drop_connections = 0
-event_ack_batch = 128
-max_rd_atomic = 16
-max_rdma_wr = 128
-max_rdma_wr_per_post = 32
-max_sge = 16
-min_rnr_timer = 1
-record_bytes_per_peer = false
-record_latency_per_peer = false
-retry_cnt = 7
-rnr_retry = 0
-send_buf_cnt = 32
-sl = 0
-start_psn = 0
-timeout = 14
 
 [server.base.groups.io_worker.transport_pool]
 max_connections = 1
@@ -162,40 +146,20 @@ response_compression_threshold = '128KB'
 check_connections_interval = '1min'
 connection_expiration_time = '1day'
 network_type = 'TCP'
+service_plane = 'Control'
 services = [ 'Core' ]
 use_independent_thread_pool = true
 
 [server.base.groups.io_worker]
 num_event_loop = 1
-rdma_connect_timeout = '5s'
-read_write_rdma_in_event_thread = false
+data_connect_timeout = '5s'
+read_write_data_in_event_thread = false
 read_write_tcp_in_event_thread = false
 tcp_connect_timeout = '1s'
 wait_to_retry_send = '100ms'
 
 [server.base.groups.io_worker.connect_concurrency_limiter]
 max_concurrency = 4
-
-[server.base.groups.io_worker.ibsocket]
-buf_ack_batch = 8
-buf_signal_batch = 8
-buf_size = 16384
-drain_timeout = '5s'
-drop_connections = 0
-event_ack_batch = 128
-max_rd_atomic = 16
-max_rdma_wr = 128
-max_rdma_wr_per_post = 32
-max_sge = 16
-min_rnr_timer = 1
-record_bytes_per_peer = false
-record_latency_per_peer = false
-retry_cnt = 7
-rnr_retry = 0
-send_buf_cnt = 32
-sl = 0
-start_psn = 0
-timeout = 14
 
 [server.base.groups.io_worker.transport_pool]
 max_connections = 1
@@ -217,10 +181,10 @@ response_compression_level = 1
 response_compression_threshold = '128KB'
 
 [server.buffer_pool]
-big_rdmabuf_count = 64
-big_rdmabuf_size = '64MB'
-rdmabuf_count = 1024
-rdmabuf_size = '4MB'
+big_buffer_count = 1
+big_buffer_size = '8MB'
+buffer_count = 2
+buffer_size = '4MB'
 
 [server.check_worker]
 disk_low_space_threshold = 0.95999999999999996
@@ -235,40 +199,23 @@ default_log_long_running_threshold = '0ns'
 default_report_metrics = false
 default_send_retry_times = 1
 default_timeout = '1s'
-enable_rdma_control = false
+enable_bulk_control = false
 force_use_tcp = false
 
 [server.client.io_worker]
 num_event_loop = 1
-rdma_connect_timeout = '5s'
-read_write_rdma_in_event_thread = false
+data_connect_timeout = '5s'
+read_write_data_in_event_thread = false
 read_write_tcp_in_event_thread = false
 tcp_connect_timeout = '1s'
 wait_to_retry_send = '100ms'
 
+[server.client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [server.client.io_worker.connect_concurrency_limiter]
 max_concurrency = 4
-
-[server.client.io_worker.ibsocket]
-buf_ack_batch = 8
-buf_signal_batch = 8
-buf_size = 16384
-drain_timeout = '5s'
-drop_connections = 0
-event_ack_batch = 128
-max_rd_atomic = 16
-max_rdma_wr = 128
-max_rdma_wr_per_post = 32
-max_sge = 16
-min_rnr_timer = 1
-record_bytes_per_peer = false
-record_latency_per_peer = false
-retry_cnt = 7
-rnr_retry = 0
-send_buf_cnt = 32
-sl = 0
-start_psn = 0
-timeout = 14
 
 [server.client.io_worker.transport_pool]
 max_connections = 1
@@ -280,7 +227,7 @@ max_processing_requests_num = 4096
 response_compression_level = 1
 response_compression_threshold = '128KB'
 
-[server.client.rdma_control]
+[server.client.bulk_control]
 max_concurrent_transmission = 64
 
 [server.client.thread_pool]
@@ -326,40 +273,23 @@ default_log_long_running_threshold = '0ns'
 default_report_metrics = false
 default_send_retry_times = 1
 default_timeout = '1s'
-enable_rdma_control = false
+enable_bulk_control = false
 force_use_tcp = false
 
 [server.forward_client.io_worker]
 num_event_loop = 1
-rdma_connect_timeout = '5s'
-read_write_rdma_in_event_thread = false
+data_connect_timeout = '5s'
+read_write_data_in_event_thread = false
 read_write_tcp_in_event_thread = false
 tcp_connect_timeout = '1s'
 wait_to_retry_send = '100ms'
 
+[server.forward_client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [server.forward_client.io_worker.connect_concurrency_limiter]
 max_concurrency = 4
-
-[server.forward_client.io_worker.ibsocket]
-buf_ack_batch = 8
-buf_signal_batch = 8
-buf_size = 16384
-drain_timeout = '5s'
-drop_connections = 0
-event_ack_batch = 128
-max_rd_atomic = 16
-max_rdma_wr = 128
-max_rdma_wr_per_post = 32
-max_sge = 16
-min_rnr_timer = 1
-record_bytes_per_peer = false
-record_latency_per_peer = false
-retry_cnt = 7
-rnr_retry = 0
-send_buf_cnt = 32
-sl = 0
-start_psn = 0
-timeout = 14
 
 [server.forward_client.io_worker.transport_pool]
 max_connections = 1
@@ -371,7 +301,7 @@ max_processing_requests_num = 4096
 response_compression_level = 1
 response_compression_threshold = '128KB'
 
-[server.forward_client.rdma_control]
+[server.forward_client.bulk_control]
 max_concurrent_transmission = 64
 
 [server.forward_client.thread_pool]
@@ -410,11 +340,11 @@ expired_clients_timeout = '1h'
 apply_transmission_before_getting_semaphore = true
 batch_read_ignore_chain_version = false
 batch_read_job_split_size = 1024
-max_concurrent_rdma_reads = 256
-max_concurrent_rdma_writes = 256
+max_concurrent_bulk_reads = 256
+max_concurrent_bulk_writes = 256
 max_num_results_per_query = 100
 post_buffer_per_bytes = '64KB'
-rdma_transmission_req_timeout = '0ns'
+bulk_transmission_req_timeout = '0ns'
 read_only = false
 
 [server.storage.event_trace_log]

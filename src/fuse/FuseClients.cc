@@ -83,10 +83,11 @@ Result<Void> FuseClients::init(const flat::AppInfo &appInfo,
   } else {
     maxThreads = fuseConfig.max_threads();
   }
-  bufPool = net::RDMABufPool::create(fuseConfig.io_bufs().max_buf_size(), fuseConfig.rdma_buf_pool_size());
+  bufPool =
+      net::SharedBufferPool::create(fuseConfig.io_bufs().max_buf_size(), fuseConfig.effectiveSharedBufferPoolSize());
 
   iovs.init(fuseRemountPref.value_or(fuseMountpoint), fuseConfig.iov_limit());
-  iors.init(fuseConfig.iov_limit());
+  RETURN_ON_ERROR(iors.init(fuseConfig.iov_limit()));
   userConfig.init(fuseConfig);
 
   if (!client) {

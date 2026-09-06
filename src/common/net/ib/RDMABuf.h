@@ -18,7 +18,6 @@
 #include <folly/futures/detail/Types.h>
 #include <folly/io/IOBufQueue.h>
 #include <folly/logging/xlog.h>
-#include <gtest/gtest_prod.h>
 #include <infiniband/verbs.h>
 #include <map>
 #include <memory>
@@ -31,6 +30,7 @@
 #include "common/net/ib/IBDevice.h"
 #include "common/serde/Serde.h"
 #include "common/utils/Coroutine.h"
+#include "common/utils/FriendTest.h"
 #include "common/utils/Result.h"
 
 namespace hf3fs::net {
@@ -351,7 +351,7 @@ class RDMABufPool : public std::enable_shared_from_this<RDMABufPool>, folly::Mov
 }  // namespace hf3fs::net
 
 template <>
-struct ::hf3fs::serde::SerdeMethod<::hf3fs::net::RDMARemoteBuf> {
+struct hf3fs::serde::SerdeMethod<hf3fs::net::RDMARemoteBuf> {
   static constexpr auto serialize(const net::RDMARemoteBuf &buf, auto &out) {
     uint8_t len = 0;
     for (auto &rkey : buf.rkeys()) {

@@ -2,7 +2,7 @@
 
 #include <atomic>
 #include <common/utils/RobinHood.h>
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 #include <memory>
 
 #include "client/mgmtd/RoutingInfo.h"
@@ -131,7 +131,7 @@ class AtomicallyTargetMap {
   ConstructLog<"storage::AtomicallyTargetMap"> constructLog_;
   std::mutex mutex_;  // for update operation.
   std::function<void(const TargetMap &)> updateCallback_ = [](auto) {};
-  folly::atomic_shared_ptr<const TargetMap> targetMap_{std::make_shared<const TargetMap>()};
+  hf3fs::AtomicSharedPtr<const TargetMap> targetMap_{std::make_shared<const TargetMap>()};
 };
 
 }  // namespace hf3fs::storage

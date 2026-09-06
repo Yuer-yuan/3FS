@@ -4,7 +4,6 @@
 #include <fcntl.h>
 #include <folly/Likely.h>
 #include <folly/lang/Bits.h>
-#include <gtest/gtest_prod.h>
 #include <memory>
 #include <optional>
 #include <queue>
@@ -22,6 +21,7 @@
 #include "common/monitor/Sample.h"
 #include "common/utils/ConfigBase.h"
 #include "common/utils/Coroutine.h"
+#include "common/utils/FriendTest.h"
 #include "common/utils/Path.h"
 #include "common/utils/Result.h"
 #include "common/utils/Status.h"

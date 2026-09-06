@@ -4,7 +4,7 @@
 #include <folly/Function.h>
 #include <folly/Synchronized.h>
 #include <folly/TimeoutQueue.h>
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 #include <folly/executors/CPUThreadPoolExecutor.h>
 #include <folly/experimental/coro/Invoke.h>
 #include <folly/experimental/coro/Sleep.h>
@@ -81,7 +81,7 @@ class MetaClient {
 
   struct Config : public ConfigBase<Config> {
     CONFIG_HOT_UPDATED_ITEM(selection_mode, ServerSelectionMode::RandomFollow);
-    CONFIG_HOT_UPDATED_ITEM(network_type, net::Address::Type::RDMA);
+    CONFIG_HOT_UPDATED_ITEM(network_type, net::Address::Type::CXL);
     CONFIG_HOT_UPDATED_ITEM(check_server_interval, 5_s);
     CONFIG_HOT_UPDATED_ITEM(max_concurrent_requests, 128u, ConfigCheckers::checkPositive);
     CONFIG_HOT_UPDATED_ITEM(remove_chunks_batch_size, uint32_t(32), ConfigCheckers::checkPositive);
@@ -320,7 +320,7 @@ class MetaClient {
   std::shared_ptr<storage::client::StorageClient> storage_;
 
  private:
-  folly::atomic_shared_ptr<ServerSelectionStrategy> serverSelection_;
+  hf3fs::AtomicSharedPtr<ServerSelectionStrategy> serverSelection_;
   std::unique_ptr<ConfigCallbackGuard> onConfigUpdated_;
   Semaphore concurrentReqSemaphore_;
 };

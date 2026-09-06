@@ -2,6 +2,7 @@ attr_timeout = 2
 entry_timeout = 2
 fsync_length_hint = true
 enable_read_cache = true
+shared_buf_pool_size = 8
 
 [[common.log.categories]]
 categories = [ '.' ]
@@ -15,7 +16,11 @@ writer_type = 'FILE'
 file_path = '${FUSE_LOG}'
 
 [mgmtd]
-mgmtd_server_addresses = [ 'RDMA://${ADDRESS}:${MGMTD_PORT}' ]
+mgmtd_server_addresses = [ 'CXL://${ADDRESS}:${MGMTD_PORT}' ]
+
+[client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
 
 [periodic_sync]
 enable = true
@@ -24,3 +29,11 @@ limit = 16
 
 [io_bufs]
 max_buf_size = '1MB'
+
+[storage.net_client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
+[storage.net_client_for_updates.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536

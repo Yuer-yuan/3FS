@@ -79,10 +79,8 @@ template <typename T>
 concept SerdeType = bool(refl::Helper::Size<T>) && is_field_infos<refl::Helper::FieldInfoList<T>>;
 
 template <typename T>
-concept SerdeCopyable =
-    std::is_same_v<T, bool> || std::is_integral_v<T> || std::is_floating_point_v<T> || std::is_enum_v<T> || requires {
-  typename T::is_serde_copyable;
-};
+concept SerdeCopyable = std::is_same_v<T, bool> || std::is_integral_v<T> || std::is_floating_point_v<T> ||
+                        std::is_enum_v<T> || requires { typename T::is_serde_copyable; };
 
 template <SerdeType T>
 constexpr inline auto count() {
@@ -427,7 +425,9 @@ class Out<T> {
   void arrayEnd(uint32_t size) { serde::serialize(Varint32(size), *this); }
 
   inline void key(std::string_view) {}  // ignore key.
-  void value(auto &&value) requires(std::is_trivially_copyable_v<std::decay_t<decltype(value)>>) {
+  void value(auto &&value)
+    requires(std::is_trivially_copyable_v<std::decay_t<decltype(value)>>)
+  {
     append(&value, sizeof(value));
   }
   void value(std::string_view str) {
@@ -435,7 +435,8 @@ class Out<T> {
     serde::serialize(Varint32(str.size()), *this);
   }
   template <class V>
-  requires(std::is_arithmetic_v<V>) void value(const std::vector<V> &vec) {
+    requires(std::is_arithmetic_v<V>)
+  void value(const std::vector<V> &vec) {
     append(vec.data(), vec.size() * sizeof(V));
     serde::serialize(Varint32(vec.size()), *this);
   }
@@ -462,7 +463,9 @@ constexpr bool is_auto_fallback_variant_v = false;
 template <typename... Ts>
 constexpr bool is_auto_fallback_variant_v<AutoFallbackVariant<Ts...>> = true;
 
-inline Result<Void> deserialize(auto &o, auto &&in) requires is_specialization<std::decay_t<decltype(in)>, In> {
+inline Result<Void> deserialize(auto &o, auto &&in)
+  requires is_specialization<std::decay_t<decltype(in)>, In>
+{
   using T = std::decay_t<decltype(o)>;
   using I = std::decay_t<decltype(in)>;
   constexpr bool isBinaryIn = requires { typename I::is_binary_in; };
@@ -856,19 +859,13 @@ inline Result<Void> fromTomlFile(auto &o, const Path &path) {
 }
 
 template <typename T>
-concept SerializableToBytes = requires(const T &o) {
-  serialize(o);
-};
+concept SerializableToBytes = requires(const T &o) { serialize(o); };
 
 template <typename T>
-concept SerializableToToml = requires(const T &o) {
-  toTomlString(o);
-};
+concept SerializableToToml = requires(const T &o) { toTomlString(o); };
 
 template <typename T>
-concept SerializableToJson = requires(const T &o) {
-  toJsonString(o);
-};
+concept SerializableToJson = requires(const T &o) { toJsonString(o); };
 
 template <typename T>
 concept Serializable = requires(const T &o) {
@@ -879,14 +876,14 @@ concept Serializable = requires(const T &o) {
 }  // namespace hf3fs::serde
 
 template <>
-struct ::hf3fs::serde::SerdeMethod<::hf3fs::Void> {
+struct hf3fs::serde::SerdeMethod<hf3fs::Void> {
   static constexpr auto serialize(Void, auto &&) {}                 // DO NOTHING.
   static Result<Void> deserialize(Void, auto &) { return Void{}; }  // DO NOTHING.
   static constexpr std::string_view serdeToReadable(Void) { return "Void"; };
 };
 
 template <>
-struct ::hf3fs::serde::SerdeMethod<::hf3fs::Status> {
+struct hf3fs::serde::SerdeMethod<hf3fs::Status> {
   static constexpr auto serialize(const Status &status, auto &out) {
     std::optional<std::string_view> msg = std::nullopt;
     if (!status.message().empty()) {
@@ -928,7 +925,7 @@ struct ::hf3fs::serde::SerdeMethod<::hf3fs::Status> {
 };
 
 template <class T>
-struct ::hf3fs::serde::SerdeMethod<::hf3fs::Result<T>> {
+struct hf3fs::serde::SerdeMethod<hf3fs::Result<T>> {
   static auto serialize(const ::hf3fs::Result<T> &result, auto &out) {
     bool hasValue = result.hasValue();
     if (hasValue) {
@@ -978,7 +975,8 @@ struct hf3fs::serde::SerdeMethod<hf3fs::Path> {
 FMT_BEGIN_NAMESPACE
 
 template <::hf3fs::serde::SerdeType T>
-requires(::hf3fs::serde::SerializableToJson<T>) struct formatter<T> : formatter<std::string_view> {
+  requires(::hf3fs::serde::SerializableToJson<T>)
+struct formatter<T> : formatter<std::string_view> {
   detail::dynamic_format_specs<char> specs_;
   /* Copy from https://fmt.dev/latest/api.html#formatting-user-defined-types */
   template <typename ParseContext>

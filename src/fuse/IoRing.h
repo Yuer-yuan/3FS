@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cerrno>
 #include <cstdint>
+#include <cstring>
 #include <semaphore.h>
 
 #include "IovTable.h"
@@ -215,16 +217,32 @@ class IoRing : public std::enable_shared_from_this<IoRing> {
 };
 
 struct IoRingTable {
-  void init(int cap) {
+  Result<Void> init(int cap) {
+    if (ioRings) {
+      return makeError(StatusCode::kInvalidArg, "I/O ring table is already initialized");
+    }
+    decltype(sems) initialized;
     for (int prio = 0; prio <= 2; ++prio) {
       auto sp = "/" + semOpenPath(prio);
-      sems.emplace_back(sem_open(sp.c_str(), O_CREAT, 0666, 0), [sp](sem_t *p) {
+      auto semaphore = sem_open(sp.c_str(), O_CREAT, 0666, 0);
+      if (semaphore == SEM_FAILED) {
+        const int error = errno;
+        return makeError(StatusCode::kInvalidConfig,
+                         fmt::format("sem_open {} failed: {} ({})", sp, std::strerror(error), error));
+      }
+      initialized.emplace_back(semaphore, [sp](sem_t *p) {
         sem_close(p);
         sem_unlink(sp.c_str());
       });
-      chmod(semPath(prio).c_str(), 0666);
+      if (chmod(semPath(prio).c_str(), 0666) != 0) {
+        const int error = errno;
+        return makeError(StatusCode::kInvalidConfig,
+                         fmt::format("chmod {} failed: {} ({})", semPath(prio).string(), std::strerror(error), error));
+      }
     }
     ioRings = std::make_unique<AtomicSharedPtrTable<IoRing>>(cap);
+    sems = std::move(initialized);
+    return Void{};
   }
   Result<int> addIoRing(const Path &mountName,
                         std::shared_ptr<lib::ShmBuf> shm,

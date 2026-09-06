@@ -1,20 +1,26 @@
 #pragma once
 
 #include <any>
+#include <bit>
 #include <common/utils/StatusCode.h>
 #include <common/utils/String.h>
 #include <cstdint>
 #include <fmt/format.h>
 #include <memory>
 #include <string_view>
+#include <utility>
 
-#include "folly/Portability.h"
+#ifndef HF3FS_PORTABLE_STATUS
+#if defined(__riscv) && __riscv_xlen == 64
+#define HF3FS_PORTABLE_STATUS 1
+#else
+#define HF3FS_PORTABLE_STATUS 0
+#endif
+#endif
 
 namespace hf3fs {
 
-#if !FOLLY_X64 && !FOLLY_AARCH64
-#error "The platform must be 64bit!"
-#endif
+static_assert(sizeof(uintptr_t) == 8, "The platform must be 64bit!");
 static_assert(std::endian::native == std::endian::little);
 
 // `Status` imitates `abseil::Status` which contains:
@@ -64,7 +70,13 @@ class [[nodiscard]] Status {
   }
   Status &operator=(Status &&other) = default;
 
-  status_code_t code() const { return reinterpret_cast<uintptr_t>(data_.get()) >> kPtrBits; }
+  status_code_t code() const {
+#if HF3FS_PORTABLE_STATUS
+    return data_.code;
+#else
+    return reinterpret_cast<uintptr_t>(data_.get()) >> kPtrBits;
+#endif
+  }
   std::string_view message() const { return rep() ? std::string_view(rep()->message) : std::string_view(); }
 
   Status convert(status_code_t code) const {
@@ -110,13 +122,41 @@ class [[nodiscard]] Status {
   static_assert(StatusCode::kOK == 0, "StatusCode::kOK must be 0!");
   static_assert(sizeof(status_code_t) == 2, "The width of status_code_t must be 16b");
 
-  static constexpr auto kPtrBits = 48u;
-  static constexpr auto kPtrMask = ((1ul << kPtrBits) - 1);
-
   struct StatusRep {
     String message;
     std::any payload;
   };
+#if HF3FS_PORTABLE_STATUS
+  // RISC-V virtual addresses need not fit in 48 bits. Keep the full pointer
+  // separately from the code; Serde still writes only code and message.
+  struct StatusPtr {
+    std::unique_ptr<StatusRep> pointer;
+    status_code_t code = StatusCode::kOK;
+
+    StatusPtr() = default;
+    StatusPtr(status_code_t value, std::unique_ptr<StatusRep> rep)
+        : pointer(std::move(rep)),
+          code(value) {}
+    StatusPtr(StatusPtr &&other) noexcept
+        : pointer(std::move(other.pointer)),
+          code(std::exchange(other.code, StatusCode::kOK)) {}
+    StatusPtr &operator=(StatusPtr &&other) noexcept {
+      if (this != &other) {
+        pointer = std::move(other.pointer);
+        code = std::exchange(other.code, StatusCode::kOK);
+      }
+      return *this;
+    }
+    StatusRep *get() const { return pointer.get(); }
+  };
+  static StatusPtr construct(status_code_t code, std::unique_ptr<StatusRep> rep) {
+    return StatusPtr(code, std::move(rep));
+  }
+  static StatusRep *extractPtr(StatusRep *rep) { return rep; }
+#else
+  static constexpr auto kPtrBits = 48u;
+  static constexpr auto kPtrMask = ((1ul << kPtrBits) - 1);
+
   struct StatusRepDeleter {
     void operator()(StatusRep *rep) { delete extractPtr(rep); }
   };
@@ -129,6 +169,7 @@ class [[nodiscard]] Status {
   static StatusRep *extractPtr(StatusRep *rep) {
     return reinterpret_cast<StatusRep *>(reinterpret_cast<uintptr_t>(rep) & kPtrMask);
   }
+#endif
 
   StatusRep *rep() { return extractPtr(data_.get()); }
   const StatusRep *rep() const { return extractPtr(data_.get()); }
@@ -141,7 +182,7 @@ class [[nodiscard]] Status {
   }
 
  private:
-  StatusPtr data_;  // |<-- low 48 bits: rep ptr -->|<-- high 16 bits: status code -->|
+  StatusPtr data_;
 };
 
 class StatusException : public std::runtime_error {

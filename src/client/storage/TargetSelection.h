@@ -4,6 +4,7 @@
 #include <mutex>
 #include <vector>
 
+#include "common/utils/ConfigBase.h"
 #include "common/utils/StatusCodeDetails.h"
 #include "fbs/storage/Common.h"
 

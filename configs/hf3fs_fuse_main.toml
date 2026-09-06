@@ -23,12 +23,33 @@ max_uid = '1M'
 memset_before_read = false
 negative_timeout = 5.0
 notify_inval_threads = 32
-rdma_buf_pool_size = 1024
+shared_buf_pool_size = 8
 readonly = false
 submit_wait_jitter = '1ms'
 symlink_timeout = 5.0
 sync_on_stat = true
 time_granularity = '1s'
+
+[cxl]
+attach_timeout = '5s'
+authority_owner_lock = ''
+authority_receipt = ''
+authority_stale_timeout = '5s'
+capability_bits = 0
+enabled = true
+endpoint = 16
+endpoint_generation = 1
+heartbeat_interval = '10ms'
+manifest_path = '/etc/3fs/cxl-runtime-manifest.json'
+mode = 'Attach'
+poll_sleep = '10us'
+poll_spin = '20us'
+poll_yields = 8
+region_length = '256MB'
+region_offset = '0B'
+region_path = '/dev/dax0.0'
+region_type = 'Dax'
+shutdown_timeout = '5s'
 
 [client]
 default_compression_level = 0
@@ -37,40 +58,23 @@ default_log_long_running_threshold = '0ns'
 default_report_metrics = false
 default_send_retry_times = 1
 default_timeout = '1s'
-enable_rdma_control = false
+enable_bulk_control = false
 force_use_tcp = false
 
 [client.io_worker]
 num_event_loop = 1
-rdma_connect_timeout = '5s'
-read_write_rdma_in_event_thread = false
+data_connect_timeout = '5s'
+read_write_data_in_event_thread = false
 read_write_tcp_in_event_thread = false
 tcp_connect_timeout = '1s'
 wait_to_retry_send = '100ms'
 
+[client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [client.io_worker.connect_concurrency_limiter]
 max_concurrency = 4
-
-[client.io_worker.ibsocket]
-buf_ack_batch = 8
-buf_signal_batch = 8
-buf_size = 16384
-drain_timeout = '5s'
-drop_connections = 0
-event_ack_batch = 128
-max_rd_atomic = 16
-max_rdma_wr = 128
-max_rdma_wr_per_post = 32
-max_sge = 16
-min_rnr_timer = 1
-record_bytes_per_peer = false
-record_latency_per_peer = false
-retry_cnt = 7
-rnr_retry = 0
-send_buf_cnt = 32
-sl = 0
-start_psn = 0
-timeout = 14
 
 [client.io_worker.transport_pool]
 max_connections = 1
@@ -82,7 +86,7 @@ max_processing_requests_num = 4096
 response_compression_level = 1
 response_compression_threshold = '128KB'
 
-[client.rdma_control]
+[client.bulk_control]
 max_concurrent_transmission = 64
 
 [client.thread_pool]
@@ -170,7 +174,7 @@ lo = 8
 check_server_interval = '5s'
 dynamic_stripe = true
 max_concurrent_requests = 128
-network_type = 'RDMA'
+network_type = 'CXL'
 remove_chunks_batch_size = 32
 remove_chunks_max_iters = 1024
 selection_mode = 'RandomFollow'
@@ -235,40 +239,23 @@ default_log_long_running_threshold = '0ns'
 default_report_metrics = false
 default_send_retry_times = 1
 default_timeout = '1s'
-enable_rdma_control = false
+enable_bulk_control = false
 force_use_tcp = false
 
 [storage.net_client.io_worker]
 num_event_loop = 1
-rdma_connect_timeout = '5s'
-read_write_rdma_in_event_thread = false
+data_connect_timeout = '5s'
+read_write_data_in_event_thread = false
 read_write_tcp_in_event_thread = false
 tcp_connect_timeout = '1s'
 wait_to_retry_send = '100ms'
 
+[storage.net_client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [storage.net_client.io_worker.connect_concurrency_limiter]
 max_concurrency = 4
-
-[storage.net_client.io_worker.ibsocket]
-buf_ack_batch = 8
-buf_signal_batch = 8
-buf_size = 16384
-drain_timeout = '5s'
-drop_connections = 0
-event_ack_batch = 128
-max_rd_atomic = 16
-max_rdma_wr = 128
-max_rdma_wr_per_post = 32
-max_sge = 16
-min_rnr_timer = 1
-record_bytes_per_peer = false
-record_latency_per_peer = false
-retry_cnt = 7
-rnr_retry = 0
-send_buf_cnt = 32
-sl = 0
-start_psn = 0
-timeout = 14
 
 [storage.net_client.io_worker.transport_pool]
 max_connections = 1
@@ -280,7 +267,7 @@ max_processing_requests_num = 4096
 response_compression_level = 1
 response_compression_threshold = '128KB'
 
-[storage.net_client.rdma_control]
+[storage.net_client.bulk_control]
 max_concurrent_transmission = 64
 
 [storage.net_client.thread_pool]
@@ -301,40 +288,23 @@ default_log_long_running_threshold = '0ns'
 default_report_metrics = false
 default_send_retry_times = 1
 default_timeout = '1s'
-enable_rdma_control = false
+enable_bulk_control = false
 force_use_tcp = false
 
 [storage.net_client_for_updates.io_worker]
 num_event_loop = 1
-rdma_connect_timeout = '5s'
-read_write_rdma_in_event_thread = false
+data_connect_timeout = '5s'
+read_write_data_in_event_thread = false
 read_write_tcp_in_event_thread = false
 tcp_connect_timeout = '1s'
 wait_to_retry_send = '100ms'
 
+[storage.net_client_for_updates.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [storage.net_client_for_updates.io_worker.connect_concurrency_limiter]
 max_concurrency = 4
-
-[storage.net_client_for_updates.io_worker.ibsocket]
-buf_ack_batch = 8
-buf_signal_batch = 8
-buf_size = 16384
-drain_timeout = '5s'
-drop_connections = 0
-event_ack_batch = 128
-max_rd_atomic = 16
-max_rdma_wr = 128
-max_rdma_wr_per_post = 32
-max_sge = 16
-min_rnr_timer = 1
-record_bytes_per_peer = false
-record_latency_per_peer = false
-retry_cnt = 7
-rnr_retry = 0
-send_buf_cnt = 32
-sl = 0
-start_psn = 0
-timeout = 14
 
 [storage.net_client_for_updates.io_worker.transport_pool]
 max_connections = 1
@@ -346,7 +316,7 @@ max_processing_requests_num = 4096
 response_compression_level = 1
 response_compression_threshold = '128KB'
 
-[storage.net_client_for_updates.rdma_control]
+[storage.net_client_for_updates.bulk_control]
 max_concurrent_transmission = 64
 
 [storage.net_client_for_updates.thread_pool]
@@ -412,7 +382,7 @@ enableChecksum = false
 
 [storage_io.read.debug]
 bypass_disk_io = false
-bypass_rdma_xmit = false
+bypass_bulk_xmit = false
 inject_random_client_error = false
 inject_random_server_error = false
 max_num_of_injection_points = 100
@@ -433,7 +403,7 @@ enableChecksum = true
 
 [storage_io.write.debug]
 bypass_disk_io = false
-bypass_rdma_xmit = false
+bypass_bulk_xmit = false
 inject_random_client_error = false
 inject_random_server_error = false
 max_num_of_injection_points = 100

@@ -23,6 +23,7 @@ class ServiceGroup : public folly::MoveOnly {
     CONFIG_ITEM(services, std::set<std::string>{});
     CONFIG_ITEM(use_independent_thread_pool, false);
     CONFIG_ITEM(network_type, Address::RDMA);
+    CONFIG_ITEM(service_plane, std::optional<ServicePlane>{});
     CONFIG_HOT_UPDATED_ITEM(check_connections_interval, 60_s);
     CONFIG_HOT_UPDATED_ITEM(connection_expiration_time, 1_d);
     CONFIG_OBJ(io_worker, IOWorker::Config);
@@ -36,8 +37,15 @@ class ServiceGroup : public folly::MoveOnly {
 
   // add normal service.
   template <class Service>
-  Result<Void> addSerdeService(std::unique_ptr<Service> &&obj, std::optional<Address::Type> type = {}) {
-    return serdeServices_.addService(std::move(obj), type.value_or(config_.network_type()) == Address::RDMA);
+  Result<Void> addSerdeService(std::unique_ptr<Service> &&obj, std::optional<ServicePlane> plane = {}) {
+    auto resolved = plane ? plane : config_.service_plane();
+    if (!resolved) {
+      resolved = legacyServicePlane(config_.network_type());
+    }
+    if (UNLIKELY(!resolved)) {
+      return makeError(StatusCode::kInvalidConfig, "CXL service group requires an explicit service plane");
+    }
+    return serdeServices_.addService(std::move(obj), {*resolved});
   }
 
   // setup this group.
@@ -50,7 +58,11 @@ class ServiceGroup : public folly::MoveOnly {
   void stopAndJoin();
 
   // set processor frozen.
-  void setFrozen(bool frozen = true) { processor_.setFrozen(frozen, config_.network_type() == Address::RDMA); }
+  void setFrozen(bool frozen = true) {
+    auto plane =
+        config_.service_plane().value_or(legacyServicePlane(config_.network_type()).value_or(ServicePlane::Control));
+    processor_.setFrozen(frozen, plane);
+  }
 
   // get listening address list.
   auto &addressList() const { return listener_.addressList(); }

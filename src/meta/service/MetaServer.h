@@ -48,9 +48,12 @@ class MetaServer : public net::Server {
     CONFIG_OBJ(base, net::Server::Config, [](net::Server::Config &c) {
       c.set_groups_length(2);
       c.groups(0).listener().set_listen_port(8000);
+      c.groups(0).set_network_type(net::Address::CXL);
+      c.groups(0).set_service_plane(net::ServicePlane::Data);
       c.groups(0).set_services({"MetaSerde"});
 
       c.groups(1).set_network_type(net::Address::TCP);
+      c.groups(1).set_service_plane(net::ServicePlane::Control);
       c.groups(1).listener().set_listen_port(9000);
       c.groups(1).set_use_independent_thread_pool(true);
       c.groups(1).set_services({"Core"});

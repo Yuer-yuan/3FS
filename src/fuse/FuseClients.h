@@ -30,7 +30,7 @@
 #define FUSE_USE_VERSION 312
 #define OP_LOG_LEVEL DBG
 
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 #include <fuse3/fuse_lowlevel.h>
 
 #include "FuseConfig.h"
@@ -41,6 +41,7 @@
 #include "client/meta/MetaClient.h"
 #include "client/mgmtd/MgmtdClientForClient.h"
 #include "client/storage/StorageClient.h"
+#include "common/net/SharedBufferPool.h"
 #include "fbs/meta/Schema.h"
 
 namespace hf3fs::fuse {
@@ -217,7 +218,7 @@ struct FuseClients {
 
   std::atomic_uint64_t dirHandle{0};
 
-  std::shared_ptr<net::RDMABufPool> bufPool;
+  std::shared_ptr<net::SharedBufferPool> bufPool;
   int maxBufsize = 0;
 
   fuse_session *se = nullptr;

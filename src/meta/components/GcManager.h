@@ -9,7 +9,6 @@
 #include <folly/Utility.h>
 #include <folly/executors/CPUThreadPoolExecutor.h>
 #include <folly/logging/xlog.h>
-#include <gtest/gtest_prod.h>
 #include <memory>
 #include <optional>
 #include <string>
@@ -32,6 +31,7 @@
 #include "common/utils/CoroutinesPool.h"
 #include "common/utils/CountDownLatch.h"
 #include "common/utils/Duration.h"
+#include "common/utils/FriendTest.h"
 #include "common/utils/PriorityCoroutinePool.h"
 #include "common/utils/Result.h"
 #include "common/utils/Semaphore.h"

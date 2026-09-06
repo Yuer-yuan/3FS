@@ -6,6 +6,7 @@
 #include "TargetSelection.h"
 #include "UpdateChannelAllocator.h"
 #include "client/mgmtd/ICommonMgmtdClient.h"
+#include "common/net/Buffer.h"
 #include "common/net/Client.h"
 #include "common/utils/Address.h"
 #include "common/utils/Coroutine.h"
@@ -45,19 +46,32 @@ class RoutingTarget {
 
 class IOBuffer : public folly::MoveOnly {
  public:
-  uint8_t *data() const { return const_cast<uint8_t *>(rdmabuf.ptr()); }
+  uint8_t *data() const { return data_; }
 
-  size_t size() const { return rdmabuf.size(); }
+  size_t size() const { return length_; }
 
-  bool contains(const uint8_t *data, uint32_t len) const { return rdmabuf.contains(data, len); }
+  bool contains(const uint8_t *data, uint32_t len) const;
 
-  net::RDMABuf subrange(size_t offset, size_t length) const { return rdmabuf.subrange(offset, length); }
+  Result<net::SharedBuffer> subrange(size_t offset, size_t length) const { return shared_.subrange(offset, length); }
 
-  IOBuffer(hf3fs::net::RDMABuf rdmabuf)
-      : rdmabuf(std::move(rdmabuf)) {}
+  explicit IOBuffer(net::SharedBuffer buffer)
+      : shared_(std::move(buffer)),
+        data_(shared_.data()),
+        length_(shared_.size()) {}
+
+  Result<net::RemoteExport> exportRemote(size_t offset, size_t length, net::RemoteAccess access) const;
+  Result<Void> copyOut(size_t offset, size_t length) const;
+  bool shadowed() const noexcept { return data_ != shared_.data(); }
 
  private:
-  const hf3fs::net::RDMABuf rdmabuf;
+  IOBuffer(net::SharedBuffer buffer, uint8_t *userData, size_t length)
+      : shared_(std::move(buffer)),
+        data_(userData),
+        length_(length) {}
+
+  net::SharedBuffer shared_;
+  uint8_t *data_{};
+  size_t length_{};
 
   friend class IOBase;
   friend class StorageClient;
@@ -160,12 +174,15 @@ class WriteIO : public IOBase {
 
 class DebugOptions : public hf3fs::ConfigBase<DebugOptions> {
   CONFIG_HOT_UPDATED_ITEM(bypass_disk_io, false);
-  CONFIG_HOT_UPDATED_ITEM(bypass_rdma_xmit, false);
+  CONFIG_HOT_UPDATED_ITEM(bypass_bulk_xmit, false);
+  CONFIG_HOT_UPDATED_ITEM(bypass_rdma_xmit, false);  // deprecated config alias
   CONFIG_HOT_UPDATED_ITEM(inject_random_server_error, false);
   CONFIG_HOT_UPDATED_ITEM(inject_random_client_error, false);
   CONFIG_HOT_UPDATED_ITEM(max_num_of_injection_points, 100);
 
  public:
+  bool bypassBulkXmit() const { return bypass_bulk_xmit() || bypass_rdma_xmit(); }
+
   DebugFlags toDebugFlags() const {
 #ifndef NDEBUG
     return DebugFlags{
@@ -200,7 +217,7 @@ class ReadOptions : public hf3fs::ConfigBase<ReadOptions> {
     bool enabled = enableChecksum();
 #endif
 
-    return enabled && !debug().bypass_disk_io() && !debug().bypass_rdma_xmit();
+    return enabled && !debug().bypass_disk_io() && !debug().bypassBulkXmit();
   }
 };
 
@@ -218,7 +235,7 @@ class WriteOptions : public hf3fs::ConfigBase<WriteOptions> {
     bool enabled = enableChecksum();
 #endif
 
-    return enabled && !debug().bypass_disk_io() && !debug().bypass_rdma_xmit();
+    return enabled && !debug().bypass_disk_io() && !debug().bypassBulkXmit();
   }
 };
 
@@ -515,6 +532,9 @@ class StorageClient : public folly::MoveOnly {
 
   // delete the returned IOBuffer object to deregister the buffer
   virtual Result<IOBuffer> registerIOBuffer(uint8_t *buf, size_t len);
+
+  // The returned buffer is backed directly by the active CXL arena.
+  virtual Result<IOBuffer> allocateIOBuffer(size_t len);
 
   virtual CoTryTask<void> batchRead(std::span<ReadIO> readIOs,
                                     const flat::UserInfo &userInfo,

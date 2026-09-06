@@ -1,7 +1,6 @@
 #pragma once
 
 #include "common/app/NodeId.h"
-#include "common/net/ib/IBDevice.h"
 #include "common/utils/ConfigBase.h"
 
 namespace hf3fs::fuse {

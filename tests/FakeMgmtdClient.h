@@ -1,7 +1,7 @@
 #include <folly/Random.h>
 #include <folly/ScopeGuard.h>
 #include <folly/Synchronized.h>
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 #include <memory>
 #include <set>
 #include <vector>
@@ -184,7 +184,7 @@ class FakeMgmtdClient : public hf3fs::client::ICommonMgmtdClient {
 
  private:
   folly::Synchronized<std::vector<flat::ClientSession>, std::mutex> sessions_;
-  folly::atomic_shared_ptr<client::RoutingInfo> routingInfo_;
+  hf3fs::AtomicSharedPtr<client::RoutingInfo> routingInfo_;
   std::map<std::string, RoutingInfoListener> listeners_;
   size_t metaId_ = 50;
   size_t storageId_ = 10000;

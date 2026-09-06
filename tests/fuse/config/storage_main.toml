@@ -13,6 +13,10 @@ file_path = '${STORAGE_LOG}'
 [server.base.groups.listener]
 listen_port = ${STORAGE_PORT}
 
+[server.base.groups.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [[server.base.groups]]
 [server.base.groups.listener]
 listen_port = 0
@@ -23,7 +27,7 @@ max_remain_groups = 1
 max_reserved_chunks = '1GB'
 
 [server.mgmtd]
-mgmtd_server_addresses = [ 'RDMA://${ADDRESS}:${MGMTD_PORT}' ]
+mgmtd_server_addresses = [ 'CXL://${ADDRESS}:${MGMTD_PORT}' ]
 
 [server.targets]
 target_paths = [ ${TARGETS} ]
@@ -33,7 +37,15 @@ allow_disk_without_uuid = true
 enable_io_uring = false
 
 [server.buffer_pool]
-big_rdmabuf_count = 16
-big_rdmabuf_size = '16MB'
-rdmabuf_count = 32
-rdmabuf_size = '4MB'
+big_buffer_count = 1
+big_buffer_size = '8MB'
+buffer_count = 2
+buffer_size = '4MB'
+
+[server.client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
+[server.forward_client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536

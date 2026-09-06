@@ -1,0 +1,79 @@
+#!/bin/busybox sh
+
+export PATH=/opt/3fs/bin:/opt/foundationdb/bin:/bin:/sbin:/usr/bin:/usr/sbin
+export LD_LIBRARY_PATH=/opt/foundationdb/lib:/usr/lib:/lib:/lib/riscv64-linux-gnu:/usr/lib/riscv64-linux-gnu:/usr/riscv64-linux-gnu/lib
+
+fail()
+{
+	echo "HF3FS_G0_GUEST_FATAL step=$1 rc=${2:-1}"
+	exec /bin/sh -i
+}
+
+mkdir -p /proc /sys /dev /run /tmp /dev/pts /var/lib/fdb /var/log/fdb /opt/3fs/etc
+mount -t proc proc /proc || fail mount-proc
+mount -t sysfs sysfs /sys || fail mount-sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || grep -q ' /dev devtmpfs ' /proc/mounts || fail mount-dev
+[ -e /dev/console ] || mknod /dev/console c 5 1 || fail mknod-console
+exec </dev/console >/dev/console 2>&1
+mount -t tmpfs tmpfs /run || fail mount-run
+mount -t tmpfs tmpfs /tmp || fail mount-tmp
+mount -t devpts devpts /dev/pts || fail mount-devpts
+ip link set lo up || fail loopback-up
+
+host_id=$(sed -n 's/.*hf3fs.host_id=\([^ ]*\).*/\1/p' /proc/cmdline)
+[ -n "$host_id" ] || fail missing-host-id
+
+# Phase-1 cohorts share one immutable root image. A small second disk carries
+# the files that differ by node and is copied into QEMU's ephemeral root layer.
+config_required=false
+grep -q 'hf3fs.config_disk=required' /proc/cmdline && config_required=true
+attempt=0
+while $config_required && [ ! -b /dev/vdb ] && [ "$attempt" -lt 100 ]; do
+	attempt=$((attempt + 1))
+	sleep 0.1
+done
+if $config_required; then
+	[ -b /dev/vdb ] || fail config-disk-discovery
+	mkdir -p /run/hf3fs-config
+	mount -o ro /dev/vdb /run/hf3fs-config || fail mount-config
+	if [ -d /run/hf3fs-config/opt/3fs/etc/full-stack ]; then
+		mkdir -p /opt/3fs/etc
+		cp -a /run/hf3fs-config/opt/3fs/etc/full-stack /opt/3fs/etc/ || fail install-3fs-config
+	fi
+	if [ -d /run/hf3fs-config/opt/io500/etc ]; then
+		mkdir -p /opt/io500
+		cp -a /run/hf3fs-config/opt/io500/etc /opt/io500/ || fail install-io500-config
+	fi
+	if [ -f /run/hf3fs-config/etc/hosts ]; then
+		cp -a /run/hf3fs-config/etc/hosts /etc/hosts || fail install-hosts
+	fi
+	[ -f /opt/3fs/etc/full-stack/cxl-fabricd.toml ] || fail verify-3fs-config
+	umount /run/hf3fs-config || fail unmount-config
+	echo "HF3FS_G0_CONFIG_READY host_id=$host_id"
+fi
+
+dax_name=
+attempt=0
+while [ "$attempt" -lt 300 ]; do
+	set -- /sys/bus/dax/devices/dax*.*
+	if [ "$#" -eq 1 ] && [ -e "$1/dev" ]; then
+		dax_name=${1##*/}
+		break
+	fi
+	attempt=$((attempt + 1))
+	sleep 0.1
+done
+[ -n "$dax_name" ] || fail dax-discovery-timeout
+dax_sys=/sys/bus/dax/devices/$dax_name
+set -- $(tr ':' ' ' < "$dax_sys/dev")
+[ "$#" -eq 2 ] || fail dax-device-number
+dax_path=/dev/$dax_name
+[ -e "$dax_path" ] || mknod "$dax_path" c "$1" "$2" || fail mknod-dax
+dax_size=$(cat "$dax_sys/size") || fail dax-size
+dax_align=$(cat "$dax_sys/align") || fail dax-align
+
+fuse_ready=false
+[ -c /dev/fuse ] && fuse_ready=true
+echo "HF3FS_G0_GUEST_READY host_id=$host_id dax=$dax_path size=$dax_size align=$dax_align fuse=$fuse_ready"
+export PS1="hf3fs-g0-$host_id# "
+exec /bin/sh -i

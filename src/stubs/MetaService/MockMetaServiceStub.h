@@ -1,6 +1,6 @@
 #pragma once
 
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 #include <optional>
 
 #include "common/serde/ClientContext.h"
@@ -62,7 +62,7 @@ class DummyMetaServiceStub : public IMetaServiceStub {
 struct MockMetaStubHolder {
   void setStub(std::unique_ptr<DummyMetaServiceStub> st) { stub = std::move(st); }
 
-  folly::atomic_shared_ptr<IMetaServiceStub> stub;
+  hf3fs::AtomicSharedPtr<IMetaServiceStub> stub;
 };
 
 class DummyMetaServiceStubWithInode : public DummyMetaServiceStub {

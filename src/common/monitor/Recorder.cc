@@ -294,6 +294,7 @@ void OperationRecorderT<LatencyRecorderT>::Guard::reportWithCode(status_code_t c
       recorder_.fail_latencies_.addSample(latency);
     }
   }
+  latency_ = latency;
   reported_ = true;
 }
 

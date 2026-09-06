@@ -1,0 +1,26 @@
+diff --git a/cache/lru_cache.cc b/cache/lru_cache.cc
+index 1434e18ba..543ef7dca 100644
+--- a/cache/lru_cache.cc
++++ b/cache/lru_cache.cc
+@@ -91,7 +91,7 @@ void LRUHandleTable::Resize() {
+   std::unique_ptr<LRUHandle* []> new_list {
+     new LRUHandle* [size_t{1} << new_length_bits] {}
+   };
+-  uint32_t count = 0;
++  [[maybe_unused]] uint32_t count = 0;
+   for (uint32_t i = 0; i < old_length; i++) {
+     LRUHandle* h = list_[i];
+     while (h != nullptr) {
+diff --git a/db/version_edit_handler.cc b/db/version_edit_handler.cc
+index 08d04c7c0..3d6703e82 100644
+--- a/db/version_edit_handler.cc
++++ b/db/version_edit_handler.cc
+@@ -26,7 +26,7 @@ void VersionEditHandlerBase::Iterate(log::Reader& reader,
+   assert(log_read_status);
+   assert(log_read_status->ok());
+ 
+-  size_t recovered_edits = 0;
++  [[maybe_unused]] size_t recovered_edits = 0;
+   Status s = Initialize();
+   while (reader.LastRecordEnd() < max_manifest_read_size_ && s.ok() &&
+          reader.ReadRecord(&record, &scratch) && log_read_status->ok()) {

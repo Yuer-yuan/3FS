@@ -1,11 +1,26 @@
 [common]
 cluster_id = ''
 
-[common.ib_devices]
-allow_unknown_zone = true
-default_network_zone = 'UNKNOWN'
-device_filter = []
-subnets = []
+[common.cxl]
+attach_timeout = '5s'
+authority_owner_lock = ''
+authority_receipt = ''
+authority_stale_timeout = '5s'
+capability_bits = 0
+enabled = true
+endpoint = 8
+endpoint_generation = 1
+heartbeat_interval = '10ms'
+manifest_path = '/etc/3fs/cxl-runtime-manifest.json'
+mode = 'Attach'
+poll_sleep = '10us'
+poll_spin = '20us'
+poll_yields = 8
+region_length = '256MB'
+region_offset = '0B'
+region_path = '/dev/dax0.0'
+region_type = 'Dax'
+shutdown_timeout = '5s'
 
 [[common.log.categories]]
 categories = [ '.' ]
@@ -76,39 +91,17 @@ proc_thread_pool_stratetry = 'SHARED_QUEUE'
 #default_timeout = '1s'
 #drop_connections_interval = '1h'
 network_type = 'TCP'
+service_plane = 'Control'
 services = [ 'MonitorCollector' ]
 use_independent_thread_pool = false
 
 [server.base.groups.io_worker]
 num_event_loop = 1
-rdma_connect_timeout = '5s'
-read_write_rdma_in_event_thread = false
+data_connect_timeout = '5s'
+read_write_data_in_event_thread = false
 read_write_tcp_in_event_thread = false
 tcp_connect_timeout = '1s'
 wait_to_retry_send = '100ms'
-
-[server.base.groups.io_worker.ibsocket]
-buf_ack_batch = 8
-buf_signal_batch = 8
-buf_size = 16384
-drop_connections = 0
-event_ack_batch = 128
-#gid_index = 0
-max_rd_atomic = 16
-max_rdma_wr = 128
-max_rdma_wr_per_post = 32
-max_sge = 16
-min_rnr_timer = 1
-pkey_index = 0
-record_bytes_per_peer = false
-record_latency_per_peer = false
-retry_cnt = 7
-rnr_retry = 0
-send_buf_cnt = 32
-sl = 0
-start_psn = 0
-timeout = 14
-traffic_class = 0
 
 [server.base.groups.io_worker.transport_pool]
 max_connections = 1

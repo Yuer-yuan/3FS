@@ -33,9 +33,11 @@ class TestIncorrectRoutingInfo : public UnitTestFabric, public ::testing::Test {
 
   void SetUp() override {
     // init ib device
+#if HF3FS_ENABLE_RDMA
     net::IBDevice::Config ibConfig;
     auto ibResult = net::IBManager::start(ibConfig);
     ASSERT_OK(ibResult);
+#endif
     ASSERT_TRUE(setUpStorageSystem());
     clientConfig_.retry().set_max_retry_time(10_s);
   }
@@ -151,10 +153,8 @@ TEST_F(TestIncorrectRoutingInfo, WorkingHeadDetectedAsOffline) {
   // let all storage servers except the host of head targets know the latest routing info
   for (size_t serverIndex = 1; serverIndex < storageServers_.size(); serverIndex++) {
     auto &storageServer = storageServers_[serverIndex];
-    auto client = RoutingStoreHelper::getMgmtdClient(*storageServer);
-    auto fakeClient = dynamic_cast<FakeMgmtdClient *>(client.get());
-    fakeClient->setRoutingInfo(newRoutingInfo);
-    RoutingStoreHelper::refreshRoutingInfo(*storageServer);
+    storageServer->setFakeRoutingInfo(newRoutingInfo);
+    storageServer->refreshRoutingInfo();
   }
 
   // client does not konw the head is marked offline yet, so let it retry for a short time

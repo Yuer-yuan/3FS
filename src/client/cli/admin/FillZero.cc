@@ -36,7 +36,6 @@ CoTryTask<Dispatcher::OutputTable> handleFillZero(IEnv &ienv,
   Path src = parser.get<std::string>("path");
   auto dryRun = parser.get<bool>("--dry-run");
   auto verbose = parser.get<bool>("--verbose");
-  auto rdmabufPool = net::RDMABufPool::create(32_MB, 1024);
   if (dryRun) {
     std::cout << "Dry-run mode, no data will be written" << std::endl;
   }
@@ -59,8 +58,10 @@ CoTryTask<Dispatcher::OutputTable> handleFillZero(IEnv &ienv,
   for (auto startPoint = 0ul; startPoint < file.length(); startPoint += 32_MB) {
     std::vector<storage::client::ReadIO> readIOs;
     std::vector<storage::client::WriteIO> writeIOs;
-    net::RDMABuf current = co_await rdmabufPool->allocate();
-    storage::client::IOBuffer buffer(current);
+    auto bufferResult = storageClient->allocateIOBuffer(32_MB);
+    CO_RETURN_AND_LOG_ON_ERROR(bufferResult);
+    auto buffer = std::move(*bufferResult);
+    size_t bufferOffset = 0;
 
     for (auto offset = startPoint; offset < file.length() && offset < startPoint + 32_MB; offset += chunkSize) {
       auto chainResult = file.file().getChainId(file.inode(), offset, *routingInfo, 0);
@@ -70,16 +71,19 @@ CoTryTask<Dispatcher::OutputTable> handleFillZero(IEnv &ienv,
       CO_RETURN_AND_LOG_ON_ERROR(chunk);
       auto l = std::min(file.file().length - offset, chunkSize);
       readIOs.push_back(
-          storageClient->createReadIO(*chainResult, *chunk, offset % chunkSize, l, current.ptr(), &buffer));
-      current.advance(chunkSize);
+          storageClient
+              ->createReadIO(*chainResult, *chunk, offset % chunkSize, l, buffer.data() + bufferOffset, &buffer));
+      bufferOffset += chunkSize;
     }
 
     auto readResult = co_await storageClient->batchRead(readIOs, env.userInfo, readOptions);
     CO_RETURN_AND_LOG_ON_ERROR(readResult);
 
-    net::RDMABuf writeCurrent = co_await rdmabufPool->allocate();
-    storage::client::IOBuffer writeBuffer(writeCurrent);
-    std::memset(writeCurrent.ptr(), 0, 32_MB);
+    auto writeBufferResult = storageClient->allocateIOBuffer(32_MB);
+    CO_RETURN_AND_LOG_ON_ERROR(writeBufferResult);
+    auto writeBuffer = std::move(*writeBufferResult);
+    std::memset(writeBuffer.data(), 0, writeBuffer.size());
+    size_t writeBufferOffset = 0;
     for (auto &readIO : readIOs) {
       auto succLength = 0ul;
       if (readIO.result.lengthInfo) {
@@ -100,9 +104,9 @@ CoTryTask<Dispatcher::OutputTable> handleFillZero(IEnv &ienv,
                                                         succLength,
                                                         readIO.length - succLength,
                                                         chunkSize,
-                                                        writeCurrent.ptr(),
+                                                        writeBuffer.data() + writeBufferOffset,
                                                         &writeBuffer));
-        writeCurrent.advance(chunkSize);
+        writeBufferOffset += chunkSize;
       }
     }
 

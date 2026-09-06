@@ -1,0 +1,273 @@
+{
+  "api_versions": [
+    710
+  ],
+  "build": {
+    "host_generators": true,
+    "target_architecture": "riscv64",
+    "targets": [
+      "fdbserver",
+      "fdb_c"
+    ]
+  },
+  "dependencies": {
+    "host_packages": [
+      {
+        "architecture": "all",
+        "package": "mono-mcs",
+        "sha256": "87b9845bd1de0e6ce7523cf8de1e3001d9d7bc4c16f977d7f38605fbf07fcd14",
+        "size": 595896,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/mono-mcs_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "amd64",
+        "package": "mono-runtime",
+        "sha256": "978c89afceb4cfa2664a54ff50c69a8fe9ab5085731fe93b404e8833c2ce5d58",
+        "size": 15240,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/mono-runtime_6.8.0.105+dfsg-3.6ubuntu2_amd64.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "amd64",
+        "package": "mono-runtime-sgen",
+        "sha256": "8683d9cdeb53189d2475e27c20261295e7b8ca018fe63b5a2b976325e6546c9b",
+        "size": 1933550,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/mono-runtime-sgen_6.8.0.105+dfsg-3.6ubuntu2_amd64.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "amd64",
+        "package": "mono-runtime-common",
+        "sha256": "1dcd262226d3c435113ceebf7a983a2f66c0cc8d00e7e40c5a38e044646fd7dd",
+        "size": 1085422,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/mono-runtime-common_6.8.0.105+dfsg-3.6ubuntu2_amd64.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "mono-gac",
+        "sha256": "ab2475510353aed9326760e16877375ad8704639e6b606f0bc44c325a5eb72f5",
+        "size": 19360,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/mono-gac_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "mono-4.0-gac",
+        "sha256": "2e26bbed48a215ceb98da08fbc7ebf4849687452fd5efa901555215bc0da7a40",
+        "size": 174086,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/mono-4.0-gac_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-corlib4.5-cil",
+        "sha256": "08df32be89c105f20361fb8fe5ce9733f79d9fb4c40e5299ea347b48c78d0005",
+        "size": 13206,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-corlib4.5-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-corlib4.5-dll",
+        "sha256": "55e9869a02429fd62be0a38f7e600b0cc042b92a8ce3ec5c7a55a729afc22d78",
+        "size": 1392322,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-corlib4.5-dll_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-system-core4.0-cil",
+        "sha256": "58f72b3081a834850447c22568a173120cd39f6c5048596ec262eb7ea8dff113",
+        "size": 342266,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-system-core4.0-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-system-xml4.0-cil",
+        "sha256": "2e90f4bf2119ba5f56fe26486f6d9fe1a9e20402b3629d6607f9f49ecb24e926",
+        "size": 909586,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-system-xml4.0-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-system4.0-cil",
+        "sha256": "1603e4dd3ac7960a219bcc4982a25ccbbbb44af7540b4e8715f323104e4a5ce4",
+        "size": 901724,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-system4.0-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-microsoft-csharp4.0-cil",
+        "sha256": "ab77fdc7507ee37a975dbf609e55cd9edcf9137ca53467ca82390af095ac665b",
+        "size": 129316,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-microsoft-csharp4.0-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-system-configuration4.0-cil",
+        "sha256": "a1c61c61a185cd4fe0dc4987bf6300328e0f1862b06d0c4deec2767e4c88b311",
+        "size": 60370,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-system-configuration4.0-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-security4.0-cil",
+        "sha256": "f4427c632c2da0ad47ff4d827a9bdc7dbd38596da711bdf4727d911c56e6fca4",
+        "size": 105880,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-security4.0-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-system-numerics4.0-cil",
+        "sha256": "b58ddba7e3f3e515d8d6cad8b045999938ff949d297ced17732d7ad73ef0c541",
+        "size": 53302,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-system-numerics4.0-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-system-security4.0-cil",
+        "sha256": "b200b40938d2cf1cdf45e4b84d947571b77942cb0e0b9436babd203250737299",
+        "size": 125466,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-system-security4.0-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-system-data4.0-cil",
+        "sha256": "d3637f4a4ab44e97e5ff9a8b974e6b924b49405936e05743fcd16c2de2cc7091",
+        "size": 643070,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-system-data4.0-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-system-xml-linq4.0-cil",
+        "sha256": "f184fb1f0e9773b54cd789bdb3ff1d20ab94a43faff931bc890538324604a057",
+        "size": 62904,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-system-xml-linq4.0-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-system-data-datasetextensions4.0-cil",
+        "sha256": "1fd8a3c3f7ceeb4c0af4f2399535374431cf4552da8ecc870c74e3955eec9995",
+        "size": 23936,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-system-data-datasetextensions4.0-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-system-enterpriseservices4.0-cil",
+        "sha256": "81fc9fb5ad4556826857773c59fa6596ff9c36b3e2e673cd8187ff42fefbfc69",
+        "size": 29498,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-system-enterpriseservices4.0-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      },
+      {
+        "architecture": "all",
+        "package": "libmono-system-transactions4.0-cil",
+        "sha256": "e613ec56ee3938314684fda2e4947d4216413b618bde03d988188c5ea4fa0232",
+        "size": 25206,
+        "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mono/libmono-system-transactions4.0-cil_6.8.0.105+dfsg-3.6ubuntu2_all.deb",
+        "version": "6.8.0.105+dfsg-3.6ubuntu2"
+      }
+    ],
+    "target_packages": [
+      {
+        "architecture": "riscv64",
+        "package": "zlib1g",
+        "sha256": "652e677877ccb9011ec9e0bf3e6c3d3a3731d8230f108401eeb131456f802dfe",
+        "size": 61034,
+        "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/z/zlib/zlib1g_1.3.dfsg-3.1ubuntu2.2_riscv64.deb",
+        "version": "1:1.3.dfsg-3.1ubuntu2.2"
+      },
+      {
+        "architecture": "riscv64",
+        "package": "zlib1g-dev",
+        "sha256": "a3abf7ff293d8e5b9e4e6a5ed5f1be353c1794ff075353061a891715e0ebda91",
+        "size": 968362,
+        "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/z/zlib/zlib1g-dev_1.3.dfsg-3.1ubuntu2.2_riscv64.deb",
+        "version": "1:1.3.dfsg-3.1ubuntu2.2"
+      },
+      {
+        "architecture": "riscv64",
+        "package": "libssl3t64",
+        "sha256": "ee72ab86e50a8208ef5f9f6312bc7d4842ad634ec259f72b634e03ad442fbd95",
+        "size": 1785158,
+        "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/o/openssl/libssl3t64_3.0.13-0ubuntu3.15_riscv64.deb",
+        "version": "3.0.13-0ubuntu3.15"
+      },
+      {
+        "architecture": "riscv64",
+        "package": "libssl-dev",
+        "sha256": "6394b9a6b573df170d90578f36eeb9eff127025229eb63374535381b208fa8ea",
+        "size": 5344656,
+        "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/o/openssl/libssl-dev_3.0.13-0ubuntu3.15_riscv64.deb",
+        "version": "3.0.13-0ubuntu3.15"
+      }
+    ]
+  },
+  "source_modifications": [
+    {
+      "path": "bindings/c/CMakeLists.txt",
+      "sha256": "d3e5477e279f0b4365cb4d3705c664f4db1b3ad22f395444cbea3a9b4aa56672"
+    },
+    {
+      "path": "bindings/c/generate_asm.py",
+      "sha256": "36e9f1a1021694459d18b922a10b18f25d1c9ce8ef727687a5f58657e419007d"
+    },
+    {
+      "path": "cmake/FDBComponents.cmake",
+      "sha256": "44c18b82dc7fea3ad9790ab383fc84de1552d8a5e97420a19b47795eea946625"
+    },
+    {
+      "path": "contrib/crc32/crc32c.cpp",
+      "sha256": "4d28892b18d44248837a3927574bffdcac427eba961aac496a168e2a42347e15"
+    },
+    {
+      "path": "contrib/stacktrace/stacktrace.amalgamation.cpp",
+      "sha256": "ebe97b9f1bd064fbecb4f02f9ad4ba6d1f9010f393c4b6f28a75227557c177cc"
+    },
+    {
+      "path": "fdbserver/include/fdbserver/art.h",
+      "sha256": "de971c0ca5046a98745ae86220f1bf4e932c129fe6ab322214d45f0b9e1a9f9d"
+    },
+    {
+      "path": "fdbserver/include/fdbserver/art_impl.h",
+      "sha256": "17a3b76995829ad3d0c32d406a3d7888cd7eb0a832d6d72c2a098f07b95e1a50"
+    },
+    {
+      "path": "flow/include/flow/Platform.h",
+      "sha256": "d8d9e51a099c1b1a8f80d591ad34042fd3638f01f187aa744b5035f9041b6931"
+    },
+    {
+      "path": "flow/Platform.actor.cpp",
+      "sha256": "7d459498f43aa56b9a9d3fd02855c400cf9143cd2df7855ecff2dab747ea5eb7"
+    }
+  ],
+  "schema": "hf3fs.fdb-riscv-lock.v1",
+  "source": {
+    "annotated_tag_object": "70a1f603842f8e7d4289cbd5e18441d74042a783",
+    "commit": "5140696da2df47c143ae74c0f4207b65d0d94876",
+    "tag": "7.3.63",
+    "url": "https://github.com/apple/foundationdb.git"
+  },
+  "upstream_archives": {
+    "boost_1_78_0": {
+      "filename": "boost_1_78_0.tar.bz2",
+      "sha256": "8681f175d4bdb26c52222665793eef08490d7758529330f98d3b29dd0735bccc",
+      "size": 110675550,
+      "url": "https://archives.boost.io/release/1.78.0/source/boost_1_78_0.tar.bz2"
+    }
+  },
+  "version": "7.3.63"
+}

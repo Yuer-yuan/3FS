@@ -18,9 +18,11 @@ class TestStorageClientFastFailover : public UnitTestFabric, public ::testing::T
 
   void SetUp() override {
     // init ib device
+#if HF3FS_ENABLE_RDMA
     net::IBDevice::Config ibConfig;
     auto ibResult = net::IBManager::start(ibConfig);
     ASSERT_OK(ibResult);
+#endif
     ASSERT_TRUE(setUpStorageSystem());
 
     // increase timeout to avoid comm error during data generation

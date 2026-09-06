@@ -1,25 +1,35 @@
+#include "common/utils/AtomicSharedPtr.h"
 #include "common/net/Transport.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <folly/experimental/coro/BlockingWait.h>
 #include <folly/experimental/coro/Sleep.h>
 #include <folly/logging/xlog.h>
 #include <iostream>
 #include <memory>
 #include <random>
+#include <sys/random.h>
 #include <thread>
 
 #include "common/monitor/Recorder.h"
 #include "common/net/IOWorker.h"
 #include "common/net/MessageHeader.h"
 #include "common/net/Socket.h"
+#include "common/net/TransportEvidence.h"
+#include "common/net/TransportRuntime.h"
 #include "common/net/Waiter.h"
 #include "common/net/WriteItem.h"
+#include "common/net/cxl/CxlConnectService.h"
+#include "common/net/cxl/CxlSocket.h"
+#if HF3FS_ENABLE_RDMA
 #include "common/net/ib/IBDevice.h"
 #include "common/net/ib/IBSocket.h"
+#endif
 #include "common/net/tcp/TcpSocket.h"
 #include "common/serde/ClientContext.h"
 #include "common/utils/Address.h"
@@ -48,53 +58,217 @@ monitor::CountRecorder writeBytes{"common_net_write_bytes"};
 monitor::DistributionRecorder batchReadSize{"common_net_batch_read_size"};
 monitor::DistributionRecorder batchWriteSize{"common_net_batch_write_size"};
 
+Result<cxl::CxlConnectionNonce> randomConnectionNonce() {
+  for (unsigned attempt = 0; attempt < 4; ++attempt) {
+    cxl::CxlConnectionNonce nonce{};
+    auto *destination = reinterpret_cast<std::byte *>(&nonce);
+    size_t remaining = sizeof(nonce);
+    while (remaining != 0) {
+      const auto result = ::getrandom(destination, remaining, 0);
+      if (result > 0) {
+        destination += result;
+        remaining -= static_cast<size_t>(result);
+      } else if (result < 0 && errno == EINTR) {
+        continue;
+      } else {
+        return makeError(RPCCode::kConnectFailed,
+                         fmt::format("getrandom for CXL connection nonce failed: {}", std::strerror(errno)));
+      }
+    }
+    if (nonce.low != 0 || nonce.high != 0) {
+      return nonce;
+    }
+  }
+  return makeError(RPCCode::kConnectFailed, "getrandom returned an all-zero CXL connection nonce");
+}
+
 }  // namespace
 
-Transport::Transport(std::unique_ptr<Socket> socket, IOWorker &io_worker, Address serverAddr)
+Transport::Transport(std::unique_ptr<Socket> socket, IOWorker &io_worker, Address serverAddr, ServicePlane servicePlane)
     : socket_(std::move(socket)),
+      kind_(socket_ ? socket_->kind() : transportKind(serverAddr.type)),
       ioWorker_(io_worker),
       connExecutor_(io_worker.connExecutorWeak()),
-      serverAddr_(serverAddr) {}
+      serverAddr_(serverAddr),
+      servicePlane_(servicePlane) {
+  if (socket_) {
+    RUNTIME_ASSERT_RESULT(socket_->bindExecutionOwner(&ioWorker_), "failed to bind socket to its I/O worker");
+    initializePublicationLedger();
+  }
+}
 
 Transport::~Transport() {
   if (auto eventLoop = eventLoop_.lock()) {
     eventLoop->remove(this);
   }
-  if (isRDMA()) {
-    IBManager::close(IBSocket::Ptr(dynamic_cast<IBSocket *>(socket_.release())));
-    auto exec = connExecutor_.lock();
-  } else {
-    dynamic_cast<TcpSocket *>(socket_.get())->close();
+  if (!socket_) {
+    return;
+  }
+  switch (kind_) {
+    case TransportKind::RDMA:
+#if HF3FS_ENABLE_RDMA
+      IBManager::close(IBSocket::Ptr(dynamic_cast<IBSocket *>(socket_.release())));
+#else
+      socket_.reset();
+#endif
+      break;
+    case TransportKind::TCP:
+      dynamic_cast<TcpSocket *>(socket_.get())->close();
+      break;
+    case TransportKind::CXL:
+      dynamic_cast<cxl::CxlSocket *>(socket_.get())->close();
+      break;
   }
 }
 
 TransportPtr Transport::create(std::unique_ptr<Socket> socket, IOWorker &io_worker, Address::Type addrType) {
-  return enable_shared_from_this::create(std::move(socket), io_worker, Address{0, 0, addrType});
+  auto plane = legacyServicePlane(addrType);
+  if (!plane) {
+    return nullptr;
+  }
+  return create(std::move(socket), io_worker, addrType, *plane);
+}
+
+TransportPtr Transport::create(std::unique_ptr<Socket> socket,
+                               IOWorker &io_worker,
+                               Address::Type addrType,
+                               ServicePlane servicePlane) {
+  if (!socket || socket->kind() != transportKind(addrType)) {
+    return nullptr;
+  }
+  auto transport = enable_shared_from_this::create(std::move(socket), io_worker, Address{0, 0, addrType}, servicePlane);
+  if (transport->kind() == TransportKind::CXL && !transport->publicationLedger_) {
+    return nullptr;
+  }
+  return transport;
 }
 
 std::shared_ptr<Transport> Transport::create(Address addr, IOWorker &io_worker) {
-  if (addr.isTCP()) {
-    return enable_shared_from_this::create(std::make_unique<TcpSocket>(), io_worker, addr);
-  } else if (addr.isRDMA()) {
-    return enable_shared_from_this::create(std::make_unique<IBSocket>(io_worker.config_.ibsocket()), io_worker, addr);
+  auto plane = legacyServicePlane(addr.type);
+  if (!plane) {
+    return nullptr;
+  }
+  return create(ServiceEndpoint{addr, *plane}, io_worker);
+}
+
+std::shared_ptr<Transport> Transport::create(ServiceEndpoint endpoint, IOWorker &io_worker) {
+  switch (transportKind(endpoint.address.type)) {
+    case TransportKind::TCP:
+      return enable_shared_from_this::create(std::make_unique<TcpSocket>(),
+                                             io_worker,
+                                             endpoint.address,
+                                             endpoint.plane);
+    case TransportKind::RDMA:
+      TransportEvidence::process().add(TransportEvidence::RdmaOpenAttempts);
+#if HF3FS_ENABLE_RDMA
+      return enable_shared_from_this::create(std::make_unique<IBSocket>(io_worker.config_.ibsocket()),
+                                             io_worker,
+                                             endpoint.address,
+                                             endpoint.plane);
+#else
+      return nullptr;
+#endif
+    case TransportKind::CXL:
+      return enable_shared_from_this::create(nullptr, io_worker, endpoint.address, endpoint.plane);
   }
   return nullptr;
 }
 
-CoTryTask<void> Transport::connect(Address addr, Duration timeout) {
-  if (addr.isRDMA()) {
+CoTryTask<void> Transport::connect(ServiceEndpoint endpoint, Duration timeout) {
+  if (endpoint != serverEndpoint()) {
+    co_return makeError(StatusCode::kInvalidArg, "transport connect endpoint does not match its pool key");
+  }
+  const auto addr = endpoint.address;
+  if (kind() == TransportKind::RDMA) {
+#if HF3FS_ENABLE_RDMA
     auto tcpAddr = Address(addr.ip, addr.port, Address::TCP);
-    static const folly::atomic_shared_ptr<const CoreRequestOptions> connectOptions{
+    static const hf3fs::AtomicSharedPtr<const CoreRequestOptions> connectOptions{
         std::make_shared<CoreRequestOptions>()};
     auto tcpCtx = serde::ClientContext(ioWorker_, tcpAddr, connectOptions);
     auto ibSocket = dynamic_cast<IBSocket *>(socket_.get());
     co_return co_await ibSocket->connect(tcpCtx, timeout);
-  } else if (addr.isTCP()) {
+#else
+    co_return makeError(RPCCode::kDataPlaneNotInitialized, "RDMA support is disabled in this build");
+#endif
+  } else if (kind() == TransportKind::TCP) {
     auto tcpSocket = dynamic_cast<TcpSocket *>(socket_.get());
     co_return co_await tcpSocket->connect(addr, timeout);
-  } else {
-    co_return makeError(StatusCode::kNotImplemented);
   }
+
+  auto context = TransportRuntime::cxlConnection(endpoint);
+  CO_RETURN_ON_ERROR(context);
+  auto nonce = randomConnectionNonce();
+  CO_RETURN_ON_ERROR(nonce);
+
+  cxl::CxlConnectReq req;
+  req.session_generation = context->fabric->layout().sessionGeneration();
+  req.requester_endpoint = context->fabric->config().endpoint.value;
+  req.requester_endpoint_generation = context->fabric->config().endpointGeneration;
+  req.requester_address = static_cast<uint64_t>(context->localAddress);
+  req.target_endpoint = context->target.value;
+  req.service_plane = static_cast<uint8_t>(endpoint.plane);
+  req.queue_depth = ioWorker_.config_.cxlsocket().queue_depth();
+  req.cell_bytes = ioWorker_.config_.cxlsocket().cell_bytes();
+  req.capability_bits = context->fabric->config().capabilityBits;
+  req.connection_nonce = *nonce;
+
+  static const hf3fs::AtomicSharedPtr<const CoreRequestOptions> connectOptions{
+      std::make_shared<CoreRequestOptions>()};
+  auto tcpCtx = serde::ClientContext(ioWorker_, addr.tcp(), connectOptions);
+  UserRequestOptions opts;
+  opts.timeout = timeout;
+  auto rsp = co_await cxl::CxlConnect<>::connect(tcpCtx, req, &opts);
+  CO_RETURN_ON_ERROR(rsp);
+  if (rsp->service_plane != static_cast<uint8_t>(endpoint.plane)) {
+    co_return makeError(RPCCode::kDataPlaneHandshakeFailed, "CXL bootstrap returned the wrong service plane");
+  }
+  auto cxlSocket = cxl::CxlConnectService::finishRequesterUnique(context->fabric, req, *rsp, addr);
+  CO_RETURN_ON_ERROR(cxlSocket);
+  auto activation = cxl::CxlConnectService::activationRequest(*rsp);
+  auto activated = co_await cxl::CxlConnect<>::activate(tcpCtx, activation, &opts);
+  if (!activated || !activated->activated) {
+    (void)cxl::CxlConnectService::faultRequester(context->fabric, *rsp);
+    (*cxlSocket)->close();
+    if (!activated) {
+      co_return makeError(std::move(activated.error()));
+    }
+    co_return makeError(RPCCode::kDataPlaneHandshakeFailed, "CXL bootstrap activation was not acknowledged");
+  }
+  CO_RETURN_ON_ERROR((*cxlSocket)->bindExecutionOwner(&ioWorker_));
+  socket_ = std::move(*cxlSocket);
+  initializePublicationLedger();
+  if (!publicationLedger_) {
+    co_return makeError(StatusCode::kDataCorruption, "CXL socket has no trustworthy initial publication snapshot");
+  }
+  co_return Void{};
+}
+
+folly::IPAddressV4 Transport::peerIP() const { return socket_ ? socket_->peerIP() : serverAddr_.toFollyIP(); }
+
+std::string Transport::describe() const {
+  return socket_ ? socket_->describe() : fmt::format("{}(connecting)", serverEndpoint().address);
+}
+
+Result<Void> Transport::check() {
+  return socket_ ? socket_->check() : makeError(RPCCode::kConnectFailed, "transport is not connected");
+}
+
+void Transport::completePublication(size_t uuid) {
+  if (publicationLedger_) {
+    (void)publicationLedger_->complete(uuid);
+  }
+}
+
+bool Transport::rdmaConnectFinished() const {
+#if HF3FS_ENABLE_RDMA
+  if (!socket_) {
+    return false;
+  }
+  auto *socket = dynamic_cast<const IBSocket *>(socket_.get());
+  return socket != nullptr && socket->checkConnectFinished();
+#else
+  return false;
+#endif
 }
 
 std::optional<WriteList> Transport::send(WriteList list) {
@@ -133,12 +307,30 @@ void Transport::invalidate(bool logError /* = true */) {
 bool Transport::invalidated() const { return flags_ & kInvalidatedFlag; }
 
 CoTask<void> Transport::closeIB() {
-  if (isRDMA()) {
+#if HF3FS_ENABLE_RDMA
+  if (kind() == TransportKind::RDMA && socket_) {
     invalidate();
     XLOGF(DBG, "Wait ib socket {} last read/write finished begin", fmt::ptr(socket_.get()));
     co_await lastReadAndWriteFinished_;
     XLOGF(DBG, "Wait ib socket {} last read/write finished end", fmt::ptr(socket_.get()));
     co_await dynamic_cast<IBSocket *>(socket_.get())->close();
+  }
+#endif
+  co_return;
+}
+
+CoTask<void> Transport::closeDataPlane() {
+  if (kind() == TransportKind::RDMA) {
+    co_await closeIB();
+  } else if (kind() == TransportKind::CXL && socket_) {
+    invalidate();
+    XLOGF(DBG, "Wait CXL socket {} last read/write finished begin", fmt::ptr(socket_.get()));
+    co_await lastReadAndWriteFinished_;
+    XLOGF(DBG, "Wait CXL socket {} last read/write finished end", fmt::ptr(socket_.get()));
+    if (auto eventLoop = eventLoop_.lock()) {
+      (void)eventLoop->remove(this);
+    }
+    dynamic_cast<cxl::CxlSocket *>(socket_.get())->close();
   }
 }
 
@@ -183,6 +375,7 @@ Transport::Action Transport::tryToSuspend() {
 }
 
 void Transport::doRead(bool error, bool logError /* = true */) {
+  Socket::ExecutionScope executionScope(&ioWorker_);
   lastUsedTime_ = RelativeTime::now();
 
   auto guard = folly::makeGuard([startTime = std::chrono::steady_clock::now()] {
@@ -204,6 +397,7 @@ void Transport::doRead(bool error, bool logError /* = true */) {
     }
 
     auto readSize = result.value();
+    TransportEvidence::process().receive(kind_, servicePlane_, readSize);
     if (readSize == 0) {
       auto action = tryToSuspend<kReadNewWakedFlag, kReadAvailableFlag, "read_available">();
       if (action == Action::Suspend) {
@@ -252,6 +446,7 @@ void Transport::doRead(bool error, bool logError /* = true */) {
 }
 
 void Transport::doWrite(bool error, bool logError /* = true */) {
+  Socket::ExecutionScope executionScope(&ioWorker_);
   auto guard = folly::makeGuard([startTime = std::chrono::steady_clock::now()] {
     auto elapsed = std::chrono::steady_clock::now() - startTime;
     doWriteCPUTime.addSample(std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count());
@@ -267,7 +462,14 @@ void Transport::doWrite(bool error, bool logError /* = true */) {
     // 1. collect items to write.
     auto newList = mpscWriteList_.takeOut();
     if (newList.empty() && inWritingList_.empty()) {
-      socket_->flush();
+      auto flushed = socket_->flush();
+      if (UNLIKELY(!flushed)) {
+        XLOGF(WARNING, "transport {} flush failed: {}", describe(), flushed.error());
+        return tryToCleanUp(true);
+      }
+      if (UNLIKELY(!observePublication())) {
+        return tryToCleanUp(true);
+      }
       auto action = tryToSuspend<kWriteNewMsgFlag, kWriteHasMsgFlag, "write_has_msg">();
       if (action == Action::Suspend) {
         return;
@@ -281,6 +483,14 @@ void Transport::doWrite(bool error, bool logError /* = true */) {
 
     // 2. concat write item list.
     if (!newList.empty()) {
+      if (publicationLedger_) {
+        auto assigned = newList.assignPublicationRanges(*publicationLedger_);
+        if (UNLIKELY(!assigned)) {
+          XLOGF(ERR, "transport {} failed to reserve publication ranges: {}", describe(), assigned.error());
+          inWritingList_.concat(std::move(newList));
+          return tryToCleanUp(true);
+        }
+      }
       inWritingList_.concat(std::move(newList));
     }
 
@@ -316,7 +526,13 @@ Transport::Action Transport::writeAll() {
 
     writeBytes.addSample(result.value());
     batchWriteSize.addSample(result.value());
-    inWritingList_.advance(result.value());
+    auto advanced = inWritingList_.advance(result.value(), publicationLedger_.get());
+    if (UNLIKELY(!advanced)) {
+      return Action::Fail;
+    }
+    if (UNLIKELY(!observePublication())) {
+      return Action::Fail;
+    }
     if (result.value() < expectedWriteSize) {
       return tryToSuspend<kWriteNewWakedFlag, kWriteAvailableFlag, "write_available">();
     }
@@ -330,7 +546,12 @@ void Transport::tryToCleanUp(bool isWrite) {
 
   if (isWrite) {
     // clean up write status.
-    auto retryList = inWritingList_.extractForRetry();
+    auto retryList = retirePublication();
+    if (!publicationLedger_ && kind_ != TransportKind::CXL) {
+      retryList.concat(inWritingList_.extractForRetry());
+    } else if (!publicationLedger_) {
+      inWritingList_.clear();
+    }
     retryList.concat(mpscWriteList_.takeOut().extractForRetry());
     if (!retryList.empty()) {
       ioWorker_.retryAsync(serverAddr_, std::move(retryList));
@@ -339,6 +560,61 @@ void Transport::tryToCleanUp(bool isWrite) {
   } else {
     wakeUpAfterLastReadAndWriteFinished(flags_ |= kLastReadFinished);
   }
+}
+
+Result<Void> Transport::observePublication() {
+  if (!publicationLedger_) {
+    return Void{};
+  }
+  auto snapshot = socket_->publicationSnapshot();
+  if (!snapshot) {
+    return makeError(StatusCode::kDataCorruption, "CXL transport lost its publication snapshot");
+  }
+  return publicationLedger_->observe(*snapshot);
+}
+
+void Transport::initializePublicationLedger() {
+  if (!socket_ || kind_ != TransportKind::CXL) {
+    return;
+  }
+  auto snapshot = socket_->publicationSnapshot();
+  if (snapshot && snapshot->trustworthy) {
+    publicationLedger_ = std::make_unique<PublicationLedger>(snapshot->laneGeneration, snapshot->acceptedOffset);
+  }
+}
+
+WriteList Transport::retirePublication() {
+  if (!publicationLedger_ || publicationRetired_.exchange(true, std::memory_order_acq_rel)) {
+    return {};
+  }
+  auto retained = inWritingList_.retainRequests(*publicationLedger_);
+  if (!retained) {
+    XLOGF(ERR, "transport {} failed to retain in-flight CXL requests: {}", describe(), retained.error());
+  }
+
+  auto snapshot = socket_->publicationSnapshot().value_or(PublicationSnapshot{});
+  // Until a peer retirement acknowledgement is implemented, a local close
+  // does not prove that the peer has stopped consuming already-published
+  // bytes.  Force conservative LaneRetired classification.
+  snapshot.trustworthy = false;
+  // close() invalidates the eventfd. Remove its kernel registration while the
+  // descriptor is still valid; destructor-time removal would use fd == -1.
+  if (auto eventLoop = eventLoop_.lock()) {
+    (void)eventLoop->remove(this);
+  }
+  dynamic_cast<cxl::CxlSocket *>(socket_.get())->close();
+
+  WriteList retry;
+  for (auto &resolution : publicationLedger_->retire(snapshot)) {
+    if (resolution.disposition == CompletionDisposition::RejectedBeforeExecute && resolution.retryable) {
+      resolution.retryable->publication.reset();
+      retry.concat(WriteList(std::move(resolution.retryable)));
+    } else {
+      TransportRuntime::quarantineCxlLifetime(std::move(resolution.requestLifetime));
+      Waiter::instance().failWithDisposition(resolution.uuid, Status(RPCCode::kTimeout), resolution.disposition);
+    }
+  }
+  return retry.extractForRetry();
 }
 
 void Transport::handleEvents(uint32_t epollEvents) {

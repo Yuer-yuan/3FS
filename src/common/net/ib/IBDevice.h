@@ -14,7 +14,6 @@
 #include <folly/Utility.h>
 #include <folly/detail/IPAddressSource.h>
 #include <folly/logging/xlog.h>
-#include <gtest/gtest_prod.h>
 #include <infiniband/verbs.h>
 #include <map>
 #include <memory>
@@ -35,6 +34,7 @@
 #include "common/utils/Address.h"
 #include "common/utils/ConfigBase.h"
 #include "common/utils/Duration.h"
+#include "common/utils/FriendTest.h"
 #include "common/utils/MagicEnum.hpp"
 #include "common/utils/Result.h"
 #include "common/utils/StrongType.h"

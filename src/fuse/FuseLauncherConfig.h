@@ -3,12 +3,19 @@
 #include "client/mgmtd/MgmtdClientForClient.h"
 #include "common/app/NodeId.h"
 #include "common/net/Client.h"
+#include "common/net/TransportRuntime.h"
+#if HF3FS_ENABLE_RDMA
+#include "common/net/ib/IBDevice.h"
+#endif
 #include "common/utils/ConfigBase.h"
 
 namespace hf3fs::fuse {
 struct FuseLauncherConfig : public ConfigBase<FuseLauncherConfig> {
   CONFIG_ITEM(cluster_id, "");
+  CONFIG_OBJ(cxl, net::TransportRuntime::Config);
+#if HF3FS_ENABLE_RDMA
   CONFIG_OBJ(ib_devices, net::IBDevice::Config);
+#endif
   CONFIG_OBJ(client, net::Client::Config);
   CONFIG_OBJ(mgmtd_client, client::MgmtdClientForClient::Config);
   CONFIG_ITEM(mountpoint, "");

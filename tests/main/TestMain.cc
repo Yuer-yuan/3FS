@@ -13,7 +13,9 @@
 
 #include "common/logging/LogInit.h"
 #include "common/monitor/Monitor.h"
+#if HF3FS_ENABLE_RDMA
 #include "common/net/ib/IBDevice.h"
+#endif
 #include "common/utils/SysResource.h"
 #include "memory/common/OverrideCppNewDelete.h"
 
@@ -210,7 +212,9 @@ int main(int argc, char *argv[]) {
   timeoutThreadSem.post();
   timeoutThread.join();
 
+#if HF3FS_ENABLE_RDMA
   hf3fs::net::IBManager::stop();
+#endif
   hf3fs::memory::shutdown();
   if (FLAGS_monitor) {
     hf3fs::monitor::Monitor::stop();

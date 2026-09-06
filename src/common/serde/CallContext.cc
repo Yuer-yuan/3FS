@@ -7,23 +7,40 @@ namespace hf3fs::serde {
 namespace {
 
 monitor::CountRecorder deserilizeFails{"common.rpc.deserilize.fails"};
-monitor::OperationRecorder applyRDMATransmission{"common.apply_rdma_transmission"};
-monitor::CountRecorder applyRDMATransmissionTimeout{"common.apply_rdma_transmission.timeout"};
+monitor::OperationRecorder applyBulkTransmission{"common.apply_bulk_transmission"};
+monitor::CountRecorder applyBulkTransmissionTimeout{"common.apply_bulk_transmission.timeout"};
 
 }  // namespace
 
-CoTask<void> CallContext::RDMATransmission::applyTransmission(Duration timeout) {
-  auto recordGuard = applyRDMATransmission.record();
-  net::UserRequestOptions options{timeout};
-  net::RDMATransmissionReq req{ctx_.packet().uuid};
+CoTask<void> CallContext::BulkTransmission::applyTransmission(Duration timeout) {
+  auto recordGuard = applyBulkTransmission.record();
+  net::UserRequestOptions options;
+  options.timeout = timeout;
+  net::BulkTransmissionReq req{ctx_.packet().uuid};
   serde::ClientContext clientCtx(ctx_.transport());
-  auto applyResult = co_await net::RDMAControl<>::apply(clientCtx, req, &options);
+  auto applyResult = co_await net::BulkControl<>::apply(clientCtx, req, &options);
   if (UNLIKELY(!applyResult)) {
     XLOGF(DBG, "apply transmission error: {}", applyResult.error());
-    applyRDMATransmissionTimeout.addSample(1);
+    applyBulkTransmissionTimeout.addSample(1);
   }
   recordGuard.succ();
 }
+
+#if HF3FS_ENABLE_RDMA
+CoTask<void> CallContext::RDMATransmission::applyTransmission(Duration timeout) {
+  auto recordGuard = applyBulkTransmission.record();
+  net::UserRequestOptions options;
+  options.timeout = timeout;
+  net::BulkTransmissionReq req{ctx_.packet().uuid};
+  serde::ClientContext clientCtx(ctx_.transport());
+  auto applyResult = co_await net::BulkControl<>::apply(clientCtx, req, &options);
+  if (UNLIKELY(!applyResult)) {
+    XLOGF(DBG, "apply transmission error: {}", applyResult.error());
+    applyBulkTransmissionTimeout.addSample(1);
+  }
+  recordGuard.succ();
+}
+#endif
 
 void CallContext::onDeserializeFailed() {
   packet_.payload = std::string_view{};

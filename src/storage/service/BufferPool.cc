@@ -1,27 +1,31 @@
 #include "storage/service/BufferPool.h"
 
-#include <folly/experimental/coro/BlockingWait.h>
-#include <folly/experimental/coro/Collect.h>
-#include <folly/experimental/coro/Invoke.h>
-#include <folly/experimental/coro/Task.h>
+#include <boost/core/ignore_unused.hpp>
 #include <sys/uio.h>
 
 #include "common/monitor/Recorder.h"
-#include "common/net/ib/RDMABuf.h"
 #include "common/utils/MagicEnum.hpp"
 #include "fbs/storage/Common.h"
 
 namespace hf3fs::storage {
 namespace {
 
-void alignBuffer(net::RDMABuf &rdmabuf) {
-  auto address = reinterpret_cast<uint64_t>(rdmabuf.ptr());
-  auto remain = address % kAIOAlignSize;
-  if (remain == 0) {
-    return;
+Result<net::SharedBuffer> takeAligned(net::SharedBuffer &buffer, uint32_t size) {
+  auto result = buffer.subrange(0, size);
+  if (!result) {
+    return makeError(std::move(result.error()));
   }
-  auto crop = kAIOAlignSize - remain;
-  rdmabuf.advance(std::min(crop, rdmabuf.size()));
+  const size_t consumed = ALIGN_UPPER(size, kAIOAlignSize);
+  if (consumed >= buffer.size()) {
+    buffer = {};
+  } else {
+    auto remaining = buffer.subrange(consumed, buffer.size() - consumed);
+    if (!remaining) {
+      return makeError(std::move(remaining.error()));
+    }
+    buffer = std::move(*remaining);
+  }
+  return result;
 }
 
 }  // namespace
@@ -31,66 +35,65 @@ Result<Void> BufferPool::init(CPUExecutorGroup &executor) {
   buffers_.reserve(UIO_MAXIOV);
 
   auto smallBufferResult =
-      initBuffers(executor, config_.rdmabuf_size(), config_.rdmabuf_count(), UIO_MAXIOV / 2, buffers_);
+      initBuffers(executor, config_.effectiveBufferSize(), config_.effectiveBufferCount(), UIO_MAXIOV / 2, buffers_);
   RETURN_AND_LOG_ON_ERROR(smallBufferResult);
   *freeIndex_.lock() = std::move(*smallBufferResult);
 
   bigBufferRegisterIndexStart_ = buffers_.size();
 
-  auto bigBufferResult =
-      initBuffers(executor, config_.big_rdmabuf_size(), config_.big_rdmabuf_count(), UIO_MAXIOV / 2, buffers_);
+  auto bigBufferResult = initBuffers(executor,
+                                     config_.effectiveBigBufferSize(),
+                                     config_.effectiveBigBufferCount(),
+                                     UIO_MAXIOV / 2,
+                                     buffers_);
   RETURN_AND_LOG_ON_ERROR(bigBufferResult);
   *bigFreeIndex_.lock() = std::move(*bigBufferResult);
 
   iovecs_.clear();
   iovecs_.reserve(buffers_.size());
   for (auto &buf : buffers_) {
-    iovecs_.push_back({(void *)buf.ptr(), buf.size()});
+    iovecs_.push_back({buf.data(), buf.size()});
   }
   return Void{};
 }
 
 Result<std::vector<BufferIndex>> BufferPool::initBuffers(CPUExecutorGroup &executor,
-                                                         Size rdmabufSize,
-                                                         uint32_t rdmabufCount,
+                                                         Size bufferSize,
+                                                         uint32_t requestedBufferCount,
                                                          uint32_t limit,
-                                                         std::vector<net::RDMABuf> &outBuffers) {
-  size_t totalSize = rdmabufSize * rdmabufCount;
-  size_t bufferCount = std::min(limit, rdmabufCount);
-  size_t smallBufferCount = (totalSize / bufferCount + rdmabufSize - 1) / rdmabufSize;
-  size_t bufferSize = smallBufferCount * rdmabufSize;
-  auto pool = net::RDMABufPool::create(bufferSize, bufferCount);
-
-  std::vector<folly::coro::TaskWithExecutor<net::RDMABuf>> tasks;
-  tasks.reserve(bufferCount);
-  for (auto i = 0u; i < bufferCount; ++i) {
-    tasks.push_back(pool->allocate().scheduleOn(&executor.pickNext()));
+                                                         std::vector<net::SharedBuffer> &outBuffers) {
+  boost::ignore_unused(executor);
+  if (bufferSize == 0 || requestedBufferCount == 0 || limit == 0) {
+    return makeError(StatusCode::kInvalidConfig, "storage buffer pool cannot be empty");
   }
-  XLOGF(INFO, "allocate {} * {} RDMA buffers started", bufferCount, Size{bufferSize});
-  auto buffers = folly::coro::blockingWait(folly::coro::collectAllRange(std::move(tasks)));
-  XLOGF(INFO, "allocate {} * {} RDMA buffers finished", bufferCount, Size{bufferSize});
+  const size_t totalSize = bufferSize * requestedBufferCount;
+  const size_t allocationCount = std::min<size_t>(limit, requestedBufferCount);
+  const size_t slicesPerAllocation = (totalSize / allocationCount + bufferSize - 1) / bufferSize;
+  const size_t allocationSize = slicesPerAllocation * bufferSize;
 
   std::vector<BufferIndex> freeIndex;
-  freeIndex.reserve(rdmabufCount);
-  for (auto &buf : buffers) {
-    if (UNLIKELY(!buf)) {
-      auto msg = fmt::format("storage init buffer pool failed");
-      XLOG(ERR, msg);
-      return makeError(StorageCode::kStorageInitFailed, std::move(msg));
+  freeIndex.reserve(requestedBufferCount);
+  XLOGF(INFO, "allocate {} * {} shared buffers started", allocationCount, Size{allocationSize});
+  for (size_t index = 0; index < allocationCount; ++index) {
+    // These addresses are registered with disk AIO and can reach device DMA.
+    // CXL transport mappings are CPU-accessible shared memory, not disk DMA
+    // buffers. Forwarding exports take a separate stable copy in the arena.
+    auto allocated = net::SharedBuffer::allocateAligned(allocationSize, kAIOAlignSize);
+    if (!allocated) {
+      return makeError(StorageCode::kStorageInitFailed, allocated.error().describe());
     }
-    alignBuffer(buf);
-
-    BufferIndex bufferIndex;
-    bufferIndex.registerIndex = outBuffers.size();
-    outBuffers.push_back(buf);
-
-    auto split = buf;
-    for (; split.size() >= rdmabufSize; split.advance(rdmabufSize)) {
-      bufferIndex.buffer = split.first(rdmabufSize);
-      freeIndex.push_back(bufferIndex);
+    const uint32_t registerIndex = outBuffers.size();
+    outBuffers.push_back(*allocated);
+    for (size_t offset = 0; offset + bufferSize <= allocated->size(); offset += bufferSize) {
+      auto slice = allocated->subrange(offset, bufferSize);
+      if (!slice) {
+        return makeError(std::move(slice.error()));
+      }
+      freeIndex.push_back(BufferIndex{registerIndex, std::move(*slice)});
     }
   }
-  return Result<std::vector<BufferIndex>>(std::move(freeIndex));
+  XLOGF(INFO, "allocate {} * {} shared buffers finished", allocationCount, Size{allocationSize});
+  return freeIndex;
 }
 
 BufferPool::Buffer::~Buffer() {
@@ -99,9 +102,9 @@ BufferPool::Buffer::~Buffer() {
   }
 }
 
-Result<net::RDMABuf> BufferPool::Buffer::tryAllocate(uint32_t size) {
+Result<net::SharedBuffer> BufferPool::Buffer::tryAllocate(uint32_t size) {
   if (indices_.empty() || current_.size() < size) {
-    if (UNLIKELY(size > pool_->rdmabufSize_)) {
+    if (UNLIKELY(size > pool_->bufferSize_)) {
       return makeError(StorageCode::kBufferSizeExceeded);
     }
     if (LIKELY(pool_->semaphore_.try_wait())) {
@@ -109,20 +112,17 @@ Result<net::RDMABuf> BufferPool::Buffer::tryAllocate(uint32_t size) {
       indices_.push_back(index);
       current_ = index.buffer;
     } else {
-      return makeError(RPCCode::kRDMANoBuf);
+      return makeError(RPCCode::kNoSharedBuffer);
     }
   }
-  auto ret = current_.takeFirst(size);
-  assert(ret);
-  alignBuffer(current_);
-  return ret;
+  return takeAligned(current_, size);
 }
 
-CoTryTask<net::RDMABuf> BufferPool::Buffer::allocate(uint32_t size) {
+CoTryTask<net::SharedBuffer> BufferPool::Buffer::allocate(uint32_t size) {
   if (indices_.empty() || current_.size() < size) {
-    if (UNLIKELY(size > pool_->bigRdmabufSize_)) {
+    if (UNLIKELY(size > pool_->bigBufferSize_)) {
       co_return makeError(StorageCode::kBufferSizeExceeded);
-    } else if (UNLIKELY(size > pool_->rdmabufSize_)) {
+    } else if (UNLIKELY(size > pool_->bufferSize_)) {
       co_await pool_->bigSemaphore_.co_wait();
       auto index = pool_->allocateBig();
       indices_.push_back(index);
@@ -134,24 +134,16 @@ CoTryTask<net::RDMABuf> BufferPool::Buffer::allocate(uint32_t size) {
       current_ = index.buffer;
     }
   }
-  auto ret = current_.takeFirst(size);
-  assert(ret);
-  alignBuffer(current_);
-  co_return ret;
+  co_return takeAligned(current_, size);
 }
 
 void BufferPool::clear(CPUExecutorGroup &executor) {
-  std::vector<folly::coro::TaskWithExecutor<void>> tasks;
-  tasks.reserve(buffers_.size());
-  for (auto &buffer : buffers_) {
-    tasks.push_back(folly::coro::co_invoke([&, buf = std::move(buffer)]() mutable -> CoTask<void> {
-                      buf = {};
-                      co_return;
-                    }).scheduleOn(&executor.pickNext()));
-  }
-  XLOGF(INFO, "deallocate {} RDMA buffers started", buffers_.size());
-  folly::coro::blockingWait(folly::coro::collectAllRange(std::move(tasks)));
-  XLOGF(INFO, "deallocate {} RDMA buffers finished", buffers_.size());
+  boost::ignore_unused(executor);
+  XLOGF(INFO, "deallocate {} shared buffers", buffers_.size());
+  freeIndex_.lock()->clear();
+  bigFreeIndex_.lock()->clear();
+  iovecs_.clear();
+  buffers_.clear();
 }
 
 BufferIndex BufferPool::allocate() {

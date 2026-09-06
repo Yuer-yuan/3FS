@@ -1,11 +1,11 @@
 #pragma once
 
 #include <folly/Likely.h>
-#include <gtest/gtest_prod.h>
 
 #include "FDB.h"
 #include "FDBTransaction.h"
 #include "common/kv/IKVEngine.h"
+#include "common/utils/FriendTest.h"
 
 namespace hf3fs {
 

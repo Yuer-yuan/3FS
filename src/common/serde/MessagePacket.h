@@ -11,7 +11,7 @@ namespace hf3fs::serde {
 enum EssentialFlags : uint16_t {
   IsReq = (1 << 0),
   UseCompress = (1 << 1),
-  ControlRDMA = (1 << 2),
+  ControlBulk = (1 << 2),
 };
 
 struct Version {
@@ -52,13 +52,15 @@ struct Timestamp {
 
 template <class T = Void>
 struct MessagePacket {
-  MessagePacket() requires(std::is_same_v<T, Void>) = default;
+  MessagePacket()
+    requires(std::is_same_v<T, Void>)
+  = default;
   explicit MessagePacket(const T &req)
       : payload(req) {}
 
   bool isRequest() const { return flags & EssentialFlags::IsReq; }
   bool useCompress() const { return flags & EssentialFlags::UseCompress; }
-  bool controlRDMA() const { return flags & EssentialFlags::ControlRDMA; }
+  bool controlBulk() const { return flags & EssentialFlags::ControlBulk; }
 
   SERDE_STRUCT_FIELD(uuid, uint64_t{});
   SERDE_STRUCT_FIELD(serviceId, uint16_t{});
@@ -72,7 +74,8 @@ struct MessagePacket {
 }  // namespace hf3fs::serde
 
 template <class T>
-requires(!std::is_same_v<T, hf3fs::Void>) struct hf3fs::serde::SerdeMethod<hf3fs::serde::PointerWrapper<T>> {
+  requires(!std::is_same_v<T, hf3fs::Void>)
+struct hf3fs::serde::SerdeMethod<hf3fs::serde::PointerWrapper<T>> {
   static void serialize(const hf3fs::serde::PointerWrapper<T> &payload, auto &out) {
     auto size = out.tableBegin(false);
     serde::serialize(*payload.t, out);

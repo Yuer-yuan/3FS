@@ -78,19 +78,18 @@ CoTryTask<Dispatcher::OutputTable> handleQueryChunk(IEnv &ienv,
   auto doRead = parser.get<bool>("--read");
   if (doRead) {
     auto index = parser.get<uint32_t>("--index");
-    auto rdmabufPool = net::RDMABufPool::create(64_MB, 4);
-    auto buffer = co_await rdmabufPool->allocate();
-    if (UNLIKELY(!buffer)) {
+    auto bufferResult = client->allocateIOBuffer(64_MB);
+    if (UNLIKELY(!bufferResult)) {
       XLOGF(ERR, "allocate buffer failed");
-      co_return makeError(RPCCode::kRDMANoBuf);
+      co_return makeError(std::move(bufferResult.error()));
     }
-    auto readBuffer = storage::client::IOBuffer{buffer};
+    auto readBuffer = std::move(*bufferResult);
     std::vector<storage::client::ReadIO> batch;
     storage::client::ReadOptions readOptions;
     readOptions.set_enableChecksum(true);
     readOptions.targetSelection().set_mode(storage::client::TargetSelectionMode::ManualMode);
     readOptions.targetSelection().set_targetIndex(index);
-    auto readIO = client->createReadIO(req.chainId, req.chunkId, 0, chunkSize, (uint8_t *)buffer.ptr(), &readBuffer);
+    auto readIO = client->createReadIO(req.chainId, req.chunkId, 0, chunkSize, readBuffer.data(), &readBuffer);
     batch.push_back(std::move(readIO));
     auto result = co_await client->batchRead(batch, env.userInfo, readOptions);
     CO_RETURN_AND_LOG_ON_ERROR(result);
@@ -99,17 +98,15 @@ CoTryTask<Dispatcher::OutputTable> handleQueryChunk(IEnv &ienv,
 
   auto doTouch = parser.get<bool>("--touch");
   if (doTouch) {
-    auto rdmabufPool = net::RDMABufPool::create(64_MB, 4);
-    auto buffer = co_await rdmabufPool->allocate();
-    if (UNLIKELY(!buffer)) {
+    auto bufferResult = client->allocateIOBuffer(64_MB);
+    if (UNLIKELY(!bufferResult)) {
       XLOGF(ERR, "allocate buffer failed");
-      co_return makeError(RPCCode::kRDMANoBuf);
+      co_return makeError(std::move(bufferResult.error()));
     }
-    auto writeBuffer = storage::client::IOBuffer{buffer};
+    auto writeBuffer = std::move(*bufferResult);
     std::vector<storage::client::WriteIO> batch;
     storage::client::WriteOptions writeOptions;
-    auto writeIO =
-        client->createWriteIO(req.chainId, req.chunkId, 0, 0, chunkSize, (uint8_t *)buffer.ptr(), &writeBuffer);
+    auto writeIO = client->createWriteIO(req.chainId, req.chunkId, 0, 0, chunkSize, writeBuffer.data(), &writeBuffer);
     batch.push_back(std::move(writeIO));
     auto result = co_await client->batchWrite(batch, env.userInfo, writeOptions);
     CO_RETURN_AND_LOG_ON_ERROR(result);

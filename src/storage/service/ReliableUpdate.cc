@@ -15,7 +15,7 @@ monitor::OperationRecorder waitChannelLockRecorder{"storage.wait_channel_lock"};
 
 CoTask<IOResult> ReliableUpdate::update(ServiceRequestContext &requestCtx,
                                         UpdateReq &req,
-                                        net::IBSocket *ibSocket,
+                                        serde::CallContext *ctx,
                                         TargetPtr &target) {
   XLOGF(DBG1, "Start reliable update, tag: {}, req: {}", req.tag, req);
 
@@ -111,7 +111,7 @@ CoTask<IOResult> ReliableUpdate::update(ServiceRequestContext &requestCtx,
 
   // 5. start a new task.
   auto recordGuard = reliableUpdateRecorder.record();
-  updateResult = co_await components_.storageOperator.handleUpdate(requestCtx, req, ibSocket, target);
+  updateResult = co_await components_.storageOperator.handleUpdate(requestCtx, req, ctx, target);
   if (LIKELY(bool(updateResult.lengthInfo))) {
     recordGuard.succ();
   }

@@ -3,9 +3,11 @@
 #include <atomic>
 #include <folly/lang/Align.h>
 #include <limits>
+#include <optional>
 #include <utility>
 
 #include "common/net/Allocator.h"
+#include "common/net/CompletionDisposition.h"
 #include "common/net/MessageHeader.h"
 #include "common/net/RequestOptions.h"
 #include "common/serde/MessagePacket.h"
@@ -15,6 +17,8 @@
 #include "common/utils/ZSTD.h"
 
 namespace hf3fs::net {
+
+class PublicationLedger;
 
 /*
  * A buffer serialized by serde.
@@ -125,12 +129,15 @@ struct WriteItem {
 
   size_t uuid = std::numeric_limits<size_t>::max();
   bool isReq() const { return uuid != std::numeric_limits<size_t>::max(); }
+  std::optional<PublicationRange> publication;
+  std::shared_ptr<void> requestLifetime;
 
   template <serde::SerdeType T>
   static auto createMessage(const T &packet, const CoreRequestOptions &options) {
     auto item = Pool::get();
     item->buf = SerdeBuffer::create(packet, options);
     item->maxRetryTimes = options.sendRetryTimes;
+    item->requestLifetime = options.requestLifetime;
     return item;
   }
 };
@@ -172,6 +179,8 @@ class WriteList {
 
   void setTransport(std::shared_ptr<Transport> tr);
 
+  Result<Void> assignPublicationRanges(PublicationLedger &ledger);
+
  protected:
   friend class MPSCWriteList;
   WriteItem *head_ = nullptr;
@@ -183,7 +192,8 @@ class WriteListWithProgress : public WriteList {
   using WriteList::WriteList;
 
   uint32_t toIOVec(struct iovec *iovec, uint32_t len, size_t &size);
-  void advance(size_t written);
+  Result<Void> advance(size_t written, PublicationLedger *ledger = nullptr);
+  Result<Void> retainRequests(PublicationLedger &ledger);
 
  private:
   // the write offset of the first write item.

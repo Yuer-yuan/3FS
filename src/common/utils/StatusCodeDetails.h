@@ -112,6 +112,10 @@ RPC_STATUS(EpollDelError, 2024)
 RPC_STATUS(EpollWakeUpError, 2025)
 RPC_STATUS(EpollWaitError, 2026)
 RPC_STATUS(IBOpenPortFailed, 2027)
+RPC_STATUS(DataPlaneHandshakeFailed, 2028)
+RPC_STATUS(TransportCapabilityMissing, 2029)
+RPC_STATUS(RemoteBufferAccessDenied, 2030)
+RPC_STATUS(StaleGeneration, 2031)
 
 /* 3xxx: meta errors. */
 // NOTE: update ErrorHandling in fbs/meta/Utils.h after add new error codes.

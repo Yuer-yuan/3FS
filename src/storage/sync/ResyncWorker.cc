@@ -449,8 +449,8 @@ CoTryTask<void> ResyncWorker::forward(const TargetPtr &target,
   TargetPtr t = target;
   ServiceRequestContext requestCtx{"resync"};
   ChunkEngineUpdateJob chunkEngineJob;
-  auto forwardResult =
-      co_await components_.reliableForwarding.forwardWithRetry(requestCtx, req, {}, chunkEngineJob, t, commitIO, false);
+  auto forwardResult = co_await components_.reliableForwarding
+                           .forwardWithRetry(requestCtx, req, {}, {}, nullptr, chunkEngineJob, t, commitIO, false);
   CO_RETURN_ON_ERROR(forwardResult.lengthInfo);
 
   recordGuard.succ();

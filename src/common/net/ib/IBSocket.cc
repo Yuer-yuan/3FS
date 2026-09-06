@@ -316,7 +316,8 @@ IBSocket::~IBSocket() {
   connections.addSample(-1);
   XLOGF(DBG, "IBSocket destructor {}", describe());
   if (qp_) {
-    ibv_qp_attr attr{.qp_state = IBV_QPS_ERR};
+    ibv_qp_attr attr{};
+    attr.qp_state = IBV_QPS_ERR;
     int ret = ibv_modify_qp(qp_.get(), &attr, IBV_QP_STATE);
     XLOGF_IF(CRITICAL, ret != 0, "IBSocket {} failed to modify QP to ERR, ret {}", describe(), ret);
   }
@@ -731,7 +732,8 @@ CoTask<void> IBSocket::close() {
   // modify QP to ERROR state
   XLOGF(DBG, "IBSocket {} modify QP to ERROR", describe());
 
-  ibv_qp_attr attr{.qp_state = IBV_QPS_ERR};
+  ibv_qp_attr attr{};
+  attr.qp_state = IBV_QPS_ERR;
   int ret = ibv_modify_qp(qp_.get(), &attr, IBV_QP_STATE);
   XLOGF_IF(CRITICAL, ret != 0, "IBSocket {} failed to modify QP to ERR, ret {}", describe(), ret);
 }
@@ -773,15 +775,10 @@ Result<Void> IBSocket::check() {
 
   // post a empty RDMA msg to check liveness
   RDMAPostCtx ctx;
-  ibv_send_wr wr{
-      .wr_id = WRId::check(),
-      .next = nullptr,
-      .sg_list = nullptr,
-      .num_sge = 0,
-      .opcode = IBV_WR_RDMA_WRITE,
-      .send_flags = IBV_SEND_SIGNALED | IBV_SEND_INLINE,
-      .imm_data = 0,
-  };
+  ibv_send_wr wr{};
+  wr.wr_id = WRId::check();
+  wr.opcode = IBV_WR_RDMA_WRITE;
+  wr.send_flags = IBV_SEND_SIGNALED | IBV_SEND_INLINE;
   ibv_send_wr *badWr = nullptr;
   int ret = ibv_post_send(qp_.get(), &wr, &badWr);
   if (UNLIKELY(ret)) {
@@ -814,15 +811,11 @@ bool IBSocket::closeGracefully() {
   // post close msg, a empty RDMA write with ImmData::close(),
   // this also notify peer this socket has been closed.
   RDMAPostCtx ctx;
-  ibv_send_wr wr{
-      .wr_id = WRId::close(),
-      .next = nullptr,
-      .sg_list = nullptr,
-      .num_sge = 0,
-      .opcode = IBV_WR_RDMA_WRITE_WITH_IMM,
-      .send_flags = IBV_SEND_SIGNALED | IBV_SEND_INLINE,
-      .imm_data = ImmData::close(),
-  };
+  ibv_send_wr wr{};
+  wr.wr_id = WRId::close();
+  wr.opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
+  wr.send_flags = IBV_SEND_SIGNALED | IBV_SEND_INLINE;
+  wr.imm_data = ImmData::close();
   ibv_send_wr *badWr = nullptr;
   int ret = ibv_post_send(qp_.get(), &wr, &badWr);
   if (UNLIKELY(ret)) {
@@ -849,14 +842,12 @@ int IBSocket::postSend(uint32_t idx, size_t len, uint32_t flags) {
     sendNotSignaled_ = 0;
     flags |= IBV_SEND_SIGNALED;
   }
-  ibv_send_wr wr{
-      .wr_id = WRId::send(signal),
-      .next = nullptr,
-      .sg_list = &sge,
-      .num_sge = 1,
-      .opcode = IBV_WR_SEND,
-      .send_flags = flags,
-  };
+  ibv_send_wr wr{};
+  wr.wr_id = WRId::send(signal);
+  wr.sg_list = &sge;
+  wr.num_sge = 1;
+  wr.opcode = IBV_WR_SEND;
+  wr.send_flags = flags;
   ibv_send_wr *badWr = nullptr;
   int ret = ibv_post_send(qp_.get(), &wr, &badWr);
   XLOGF_IF(CRITICAL, ret != 0, "IBSocket {} failed to post send, closed {}, errno {}", describe(), closed_.load(), ret);
@@ -866,15 +857,11 @@ int IBSocket::postSend(uint32_t idx, size_t len, uint32_t flags) {
 int IBSocket::postAck() {
   IBDBG("IBSocket {} post ACK.", describe());
 
-  ibv_send_wr wr{
-      .wr_id = WRId::ack(),
-      .next = nullptr,
-      .sg_list = nullptr,
-      .num_sge = 0,
-      .opcode = IBV_WR_SEND_WITH_IMM,
-      .send_flags = IBV_SEND_SIGNALED,
-      .imm_data = ImmData::ack(connectConfig_.buf_ack_batch),
-  };
+  ibv_send_wr wr{};
+  wr.wr_id = WRId::ack();
+  wr.opcode = IBV_WR_SEND_WITH_IMM;
+  wr.send_flags = IBV_SEND_SIGNALED;
+  wr.imm_data = ImmData::ack(connectConfig_.buf_ack_batch);
   ibv_send_wr *badWr = nullptr;
   int ret = ibv_post_send(qp_.get(), &wr, &badWr);
   XLOGF_IF(CRITICAL,
@@ -894,12 +881,10 @@ int IBSocket::postRecv(uint32_t idx) {
       .length = (uint32_t)recvBufs_.getBufSize(),
       .lkey = recvBufs_.getMr()->lkey,
   };
-  ibv_recv_wr wr{
-      .wr_id = WRId::recv(idx),
-      .next = nullptr,
-      .sg_list = &sge,
-      .num_sge = 1,
-  };
+  ibv_recv_wr wr{};
+  wr.wr_id = WRId::recv(idx);
+  wr.sg_list = &sge;
+  wr.num_sge = 1;
   ibv_recv_wr *badWr = nullptr;
   int ret = ibv_post_recv(qp_.get(), &wr, &badWr);
   XLOGF_IF(CRITICAL, ret != 0, "IBSocket {} failed to post recv, closed {}, errno {}", describe(), closed_.load(), ret);
@@ -909,22 +894,23 @@ int IBSocket::postRecv(uint32_t idx) {
 int IBSocket::postConnectProbe() {
   IBDBG("IBSocket {} post connect probe.", describe());
 
-  // Use IBV_WR_SEND_WITH_IMM with ACK(0) as connect probe. This guarantees backward 
+  // Use IBV_WR_SEND_WITH_IMM with ACK(0) as connect probe. This guarantees backward
   // compatibility (sendAcked_ += 0) and works well with virtualized RDMA environments.
   //
   // Note: Unlike regular postSend, this does NOT consume a send buffer (sg_list = nullptr).
-  ibv_send_wr wr{
-      .wr_id = WRId::send(0),
-      .next = nullptr,
-      .sg_list = nullptr,
-      .num_sge = 0,
-      .opcode = IBV_WR_SEND_WITH_IMM,
-      .send_flags = IBV_SEND_SIGNALED,
-      .imm_data = ImmData::ack(0),
-  };
+  ibv_send_wr wr{};
+  wr.wr_id = WRId::send(0);
+  wr.opcode = IBV_WR_SEND_WITH_IMM;
+  wr.send_flags = IBV_SEND_SIGNALED;
+  wr.imm_data = ImmData::ack(0);
   ibv_send_wr *badWr = nullptr;
   int ret = ibv_post_send(qp_.get(), &wr, &badWr);
-  XLOGF_IF(CRITICAL, ret != 0, "IBSocket {} failed to post connect probe, closed {}, errno {}", describe(), closed_.load(), ret);
+  XLOGF_IF(CRITICAL,
+           ret != 0,
+           "IBSocket {} failed to post connect probe, closed {}, errno {}",
+           describe(),
+           closed_.load(),
+           ret);
   return ret;
 }
 
@@ -1106,7 +1092,8 @@ int IBSocket::rdmaPostWR(RDMAPostCtx &ctx) {
           ret,
           (void *)&wrs[0],
           (void *)bad);
-    ibv_qp_attr attr{.qp_state = IBV_QPS_ERR};
+    ibv_qp_attr attr{};
+    attr.qp_state = IBV_QPS_ERR;
     int ret = ibv_modify_qp(qp_.get(), &attr, IBV_QP_STATE);
     XLOGF_IF(FATAL, ret != 0, "IBSocket {} failed to modify QP to ERR, ret {}", describe(), ret);
   }

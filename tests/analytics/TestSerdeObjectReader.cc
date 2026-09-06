@@ -130,6 +130,7 @@ TEST(TestSerdeObjectReader, UpdateReq) {
                   .seqnum = storage::ChannelSeqNum{1},
               },
           },
+      .requestLifetime = {},
   };
 
   readAndCompareSerdeObjectDump(updateReq);

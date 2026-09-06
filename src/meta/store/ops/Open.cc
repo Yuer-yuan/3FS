@@ -88,7 +88,7 @@ class OpenOp : public Operation<Rsp> {
 
     switch (inode.getType()) {
       case InodeType::Directory:
-        co_return co_await openExistsDirectory(txn, inode);
+        co_return co_await openExistsDirectory(inode);
       case InodeType::File:
         co_return co_await openExistsFile(txn, entry, inode, checkHole);
       default:
@@ -96,7 +96,7 @@ class OpenOp : public Operation<Rsp> {
     }
   }
 
-  CoTryTask<Rsp> openExistsDirectory(IReadOnlyTransaction &txn, Inode &inode) {
+  CoTryTask<Rsp> openExistsDirectory(Inode &inode) {
     XLOGF_IF(FATAL, !inode.isDirectory(), "Inode {} is not directory", inode);
     if (req_.flags.accessType() != AccessType::READ || req_.flags.contains(O_TRUNC) || std::is_same_v<Req, CreateReq>) {
       co_return makeError(MetaCode::kIsDirectory);

@@ -1,9 +1,11 @@
 #include <boost/core/ignore_unused.hpp>
+#include <cstring>
+#include <limits>
 
 #include "StorageClientImpl.h"
 #include "StorageClientInMem.h"
 #include "common/monitor/ScopedMetricsWriter.h"
-#include "common/net/ib/RDMABuf.h"
+#include "common/net/TransportRuntime.h"
 
 namespace hf3fs::storage::client {
 
@@ -11,6 +13,38 @@ static monitor::CountRecorder iobuf_reg_success_ops{"storage_client.iobuf_reg.su
 static monitor::CountRecorder iobuf_reg_failed_ops{"storage_client.iobuf_reg.failed_ops"};
 static monitor::LatencyRecorder iobuf_reg_latency{"storage_client.iobuf_reg.latency"};
 static monitor::DistributionRecorder iobuf_reg_size{"storage_client.iobuf_reg.size"};
+static monitor::CountRecorder shadowCopyInBytes{"storage_client.shadow_copy_in_bytes"};
+static monitor::CountRecorder shadowCopyOutBytes{"storage_client.shadow_copy_out_bytes"};
+
+bool IOBuffer::contains(const uint8_t *data, uint32_t len) const {
+  const auto begin = reinterpret_cast<uintptr_t>(data_);
+  const auto candidate = reinterpret_cast<uintptr_t>(data);
+  return data_ != nullptr && candidate >= begin && candidate - begin <= length_ && len <= length_ - (candidate - begin);
+}
+
+Result<net::RemoteExport> IOBuffer::exportRemote(size_t offset, size_t length, net::RemoteAccess access) const {
+  auto range = shared_.subrange(offset, length);
+  if (!range) {
+    return makeError(std::move(range.error()));
+  }
+  if (shadowed() && (net::remoteAccessBits(access) & net::remoteAccessBits(net::RemoteAccess::Read)) != 0) {
+    std::memcpy(range->data(), data_ + offset, length);
+    shadowCopyInBytes.addSample(length);
+  }
+  return range->exportRemote(access);
+}
+
+Result<Void> IOBuffer::copyOut(size_t offset, size_t length) const {
+  auto range = shared_.subrange(offset, length);
+  if (!range) {
+    return makeError(std::move(range.error()));
+  }
+  if (shadowed()) {
+    std::memcpy(data_ + offset, range->data(), length);
+    shadowCopyOutBytes.addSample(length);
+  }
+  return Void{};
+}
 
 const StorageClient::Config StorageClient::kDefaultConfig;
 
@@ -98,15 +132,34 @@ Result<IOBuffer> StorageClient::registerIOBuffer(uint8_t *buf, size_t len) {
   monitor::ScopedLatencyWriter latencyWriter(iobuf_reg_latency);
   iobuf_reg_size.addSample(len);
 
-  auto rdmabuf = hf3fs::net::RDMABuf::createFromUserBuffer(buf, len);
-
-  if (rdmabuf.valid()) {
-    iobuf_reg_success_ops.addSample(1);
-    return IOBuffer{rdmabuf};
-  } else {
+  if (buf == nullptr || len == 0) {
     iobuf_reg_failed_ops.addSample(1);
-    return makeError(StorageClientCode::kMemoryError);
+    return makeError(StatusCode::kInvalidArg, "cannot register an empty IO buffer");
   }
+
+  auto arena = net::TransportRuntime::cxlBufferArena();
+  auto shared = arena ? arena->tryAllocate(len)
+                : config_.implementation_type() == ImplementationType::InMem
+                    ? net::SharedBuffer::allocateHeap(len)
+                    : Result<net::SharedBuffer>{makeError(RPCCode::kDataPlaneNotInitialized)};
+  if (!shared) {
+    iobuf_reg_failed_ops.addSample(1);
+    return makeError(std::move(shared.error()));
+  }
+  iobuf_reg_success_ops.addSample(1);
+  return IOBuffer{std::move(*shared), buf, len};
+}
+
+Result<IOBuffer> StorageClient::allocateIOBuffer(size_t len) {
+  auto arena = net::TransportRuntime::cxlBufferArena();
+  auto shared = arena ? arena->tryAllocate(len)
+                : config_.implementation_type() == ImplementationType::InMem
+                    ? net::SharedBuffer::allocateHeap(len)
+                    : Result<net::SharedBuffer>{makeError(RPCCode::kDataPlaneNotInitialized)};
+  if (!shared) {
+    return makeError(std::move(shared.error()));
+  }
+  return IOBuffer{std::move(*shared)};
 }
 
 }  // namespace hf3fs::storage::client

@@ -47,7 +47,7 @@ void setReadJobResult(void *raw, int64_t res) {
           "set read job failed: {}, state: {}, buf: {}, code: {}",
           job->readIO(),
           job->state(),
-          fmt::ptr(job->state().localbuf.ptr()),
+          fmt::ptr(job->state().localbuf.data()),
           -res);
     job->setResult(makeError(StorageCode::kChunkReadFailed, fmt::format("errno: {}", -res)));
     // WARNING: job is no longer available.
@@ -99,7 +99,7 @@ void AioStatus::collect() {
     availables_.pop_back();
     auto &state = job.state();
     job.resetStartTime();
-    ::io_prep_pread(iocb, state.readFd, state.localbuf.ptr(), state.readLength, state.readOffset);
+    ::io_prep_pread(iocb, state.readFd, state.localbuf.data(), state.readLength, state.readOffset);
     iocb->data = &job;
   }
   recordGuard.succ();
@@ -229,7 +229,7 @@ void IoUringStatus::collect() {
     assert(sqe != nullptr);
     ::io_uring_prep_read_fixed(sqe,
                                state.fdIndex.value_or(state.readFd),
-                               state.localbuf.ptr(),
+                               state.localbuf.data(),
                                state.readLength,
                                state.readOffset,
                                state.bufferIndex);

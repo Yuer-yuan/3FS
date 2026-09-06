@@ -23,6 +23,10 @@ struct ServerWithConfig {
     auto &baseConfig = config.base();
     for (size_t i = 0; i < baseConfig.groups_length(); ++i) {
       baseConfig.groups(i).set_network_type(net::Address::LOCAL);
+      // LOCAL is the in-process control transport used by this fixture.
+      // Override production data-plane assignments together with the
+      // network type so services are registered in the matching plane.
+      baseConfig.groups(i).set_service_plane(net::ServicePlane::Control);
       baseConfig.groups(i).listener().set_listen_port(0);
       baseConfig.groups(i).listener().set_reuse_port(true);
     }

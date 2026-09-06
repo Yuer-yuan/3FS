@@ -7,8 +7,10 @@
 #include "common/net/IOWorker.h"
 #include "common/net/Network.h"
 #include "common/net/Transport.h"
+#if HF3FS_ENABLE_RDMA
 #include "common/net/ib/IBConnectService.h"
 #include "common/net/ib/IBSocket.h"
+#endif
 #include "common/utils/ConfigBase.h"
 
 namespace hf3fs::net {
@@ -32,7 +34,6 @@ class Listener {
   };
 
   Listener(const Config &config,
-           const IBSocket::Config &ibconfig,
            IOWorker &ioWorker,
            folly::IOThreadPoolExecutor &connThreadPool,
            Address::Type networkType);
@@ -57,16 +58,17 @@ class Listener {
   // accept a TCP connection.
   CoTask<void> acceptTCP(std::unique_ptr<folly::coro::Transport> tr);
 
+#if HF3FS_ENABLE_RDMA
   // accept a RDMA connection.
   void acceptRDMA(std::unique_ptr<IBSocket> socket);
   CoTask<void> checkRDMA(std::weak_ptr<Transport> weak);
+#endif
 
   // release a TCP connection.
   CoTask<void> release(folly::coro::ServerSocket /* socket */);
 
  private:
   const Config &config_;
-  const IBSocket::Config &ibconfig_;
   IOWorker &ioWorker_;
   folly::IOThreadPoolExecutor &connThreadPool_;
   Address::Type networkType_;

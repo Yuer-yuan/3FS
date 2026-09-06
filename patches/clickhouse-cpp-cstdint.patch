@@ -1,0 +1,11 @@
+diff --git a/clickhouse/base/wire_format.h b/clickhouse/base/wire_format.h
+index 9bbf795..cdad7f0 100644
+--- a/clickhouse/base/wire_format.h
++++ b/clickhouse/base/wire_format.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <cstdint>
+ #include <string>
+ 
+ namespace clickhouse {

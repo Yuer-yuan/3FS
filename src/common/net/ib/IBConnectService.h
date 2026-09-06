@@ -2,7 +2,6 @@
 
 #include <atomic>
 #include <folly/IPAddressV4.h>
-#include <gtest/gtest_prod.h>
 #include <map>
 
 #include "common/net/ib/IBConnect.h"
@@ -12,6 +11,7 @@
 #include "common/serde/Service.h"
 #include "common/utils/Coroutine.h"
 #include "common/utils/Duration.h"
+#include "common/utils/FriendTest.h"
 
 namespace hf3fs::net {
 

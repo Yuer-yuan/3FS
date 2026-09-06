@@ -2,7 +2,6 @@
 
 #include <folly/Overload.h>
 #include <folly/Utility.h>
-#include <gtest/gtest_prod.h>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -10,6 +9,7 @@
 #include "common/kv/ITransaction.h"
 #include "common/utils/Coroutine.h"
 #include "common/utils/Duration.h"
+#include "common/utils/FriendTest.h"
 #include "common/utils/Path.h"
 #include "fbs/meta/Common.h"
 #include "meta/components/AclCache.h"

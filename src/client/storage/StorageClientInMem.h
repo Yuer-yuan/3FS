@@ -3,7 +3,6 @@
 #include <folly/Synchronized.h>
 #include <folly/Utility.h>
 #include <folly/experimental/coro/Mutex.h>
-#include <gtest/gtest_prod.h>
 #include <map>
 #include <mutex>
 #include <span>

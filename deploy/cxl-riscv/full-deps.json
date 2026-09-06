@@ -1,0 +1,550 @@
+{
+  "schema": "hf3fs.full-deps.v1",
+  "target": "riscv64-linux-gnu",
+  "rust_target": "riscv64gc-unknown-linux-gnu",
+  "arrow_commit": "b7d2f7ffca66c868bd2fce5b3749c6caa002a7f0",
+  "package_indexes": [
+    {
+      "url": "https://ports.ubuntu.com/ubuntu-ports/dists/noble/main/binary-riscv64/Packages.xz",
+      "sha256": "cd2428f2fc1753e8d20645e841939b398c9816fd1e719860b0d9c2ce703af50b"
+    },
+    {
+      "url": "https://ports.ubuntu.com/ubuntu-ports/dists/noble/universe/binary-riscv64/Packages.xz",
+      "sha256": "2a1438315d0c3cc1292aaf93bca6c1fa5923ccf75033740cd28a8ae1aea33eb1"
+    }
+  ],
+  "roots": [
+    "libboost1.83-dev",
+    "libboost-context1.83-dev",
+    "libboost-filesystem1.83-dev",
+    "libboost-program-options1.83-dev",
+    "libboost-regex1.83-dev",
+    "libboost-system1.83-dev",
+    "libboost-thread1.83-dev",
+    "libuv1-dev",
+    "libnuma-dev",
+    "libevent-dev",
+    "libgflags-dev",
+    "libgoogle-glog-dev",
+    "libdouble-conversion-dev",
+    "liblz4-dev",
+    "liblzma-dev",
+    "libdwarf-dev",
+    "libunwind-dev",
+    "libaio-dev",
+    "libgoogle-perftools-dev",
+    "libbz2-dev",
+    "libsnappy-dev"
+  ],
+  "provided_by_base_sysroot": [
+    "libc6",
+    "libc6-dev",
+    "libgcc-s1",
+    "libssl3t64",
+    "libstdc++-13-dev",
+    "libstdc++6",
+    "zlib1g"
+  ],
+  "host_tools_not_target_dependencies": [
+    "icu-devtools"
+  ],
+  "packages": [
+    {
+      "package": "libaio-dev",
+      "version": "0.3.113-6build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/liba/libaio/libaio-dev_0.3.113-6build1_riscv64.deb",
+      "size": 23732,
+      "sha256": "1ff195bfabad51a265f8c7686dcbd3acb59ad9733a7935437b07676dc1e8d5d1"
+    },
+    {
+      "package": "libaio1t64",
+      "version": "0.3.113-6build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/liba/libaio/libaio1t64_0.3.113-6build1_riscv64.deb",
+      "size": 7238,
+      "sha256": "1ed2eb982b8bc79801ef06ce0c2f442396957f72d6f9c065d1bed83f962d5dfb"
+    },
+    {
+      "package": "libboost-atomic1.83-dev",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-atomic1.83-dev_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 241656,
+      "sha256": "b630731cfbc5a070dc86a5c6e47175ae6dfb6d8a0347d9a31e582be89e3a61d5"
+    },
+    {
+      "package": "libboost-atomic1.83.0",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-atomic1.83.0_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 238898,
+      "sha256": "a7894fc7fa7e601886a2e67af6452aab1478e77cdbcfbbf8f225de24194f91ca"
+    },
+    {
+      "package": "libboost-chrono1.83-dev",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-chrono1.83-dev_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 295650,
+      "sha256": "867c5bb8814d5f43a6c935db12e51796fe49acfc1e8785005d48fcad6de62700"
+    },
+    {
+      "package": "libboost-chrono1.83.0t64",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-chrono1.83.0t64_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 246020,
+      "sha256": "5000b4d8d4bde49f35147c8b2bedf4593804a111e61b67333c160ace88ad57c0"
+    },
+    {
+      "package": "libboost-context1.83-dev",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/universe/b/boost1.83/libboost-context1.83-dev_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 233392,
+      "sha256": "bd9a5f23228b8ee642ae14d080f7a5864befc78e94f16a3f64d9f374d3738cf7"
+    },
+    {
+      "package": "libboost-context1.83.0",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-context1.83.0_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 236804,
+      "sha256": "adf87383db99d3e4218b77394bad4d85c5772e7b15effd69a6b2c6c3c4a6ee50"
+    },
+    {
+      "package": "libboost-date-time1.83-dev",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-date-time1.83-dev_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 238910,
+      "sha256": "78a140b5c9cbf53190e76e44fa1d3241764d8c2418500dcdf87e0582310b7a43"
+    },
+    {
+      "package": "libboost-date-time1.83.0",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-date-time1.83.0_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 235476,
+      "sha256": "596e536b10aa8a4b5203f3caa93dae92116bd72f5d814395fd32d3e770eb7094"
+    },
+    {
+      "package": "libboost-filesystem1.83-dev",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/universe/b/boost1.83/libboost-filesystem1.83-dev_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 532306,
+      "sha256": "6f18784f25575a5f9e1df8972f091aae494eadf56842ef2e532db3f09967386a"
+    },
+    {
+      "package": "libboost-filesystem1.83.0",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-filesystem1.83.0_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 287808,
+      "sha256": "a189da60663501ac044577b3178fac853af274abf06ea3fd1cde0a83a1458d32"
+    },
+    {
+      "package": "libboost-program-options1.83-dev",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-program-options1.83-dev_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 1173616,
+      "sha256": "ce79eabdb52d80907de84b109cf300ab1588238ade82383c11c7af7f99d54650"
+    },
+    {
+      "package": "libboost-program-options1.83.0",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-program-options1.83.0_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 363270,
+      "sha256": "05a6f61938fa50043eb7ad469948fe0004f43fe615691c42d810584c5f5ef0d2"
+    },
+    {
+      "package": "libboost-regex1.83-dev",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-regex1.83-dev_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 736060,
+      "sha256": "cf6b6855dc113d86f77bb3870223781a9a90d50c0e4a2d5a6af6876b63ff591d"
+    },
+    {
+      "package": "libboost-regex1.83.0",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-regex1.83.0_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 337150,
+      "sha256": "24f5d439fc0a917ca907c9fd079007c992a38cb4439b6e0d955aaaf30f2be7da"
+    },
+    {
+      "package": "libboost-serialization1.83-dev",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-serialization1.83-dev_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 893566,
+      "sha256": "ff5c59c317d1e838e11f6b37d2ddd1e510c41c1cf1b3eea6bdec4251a630527d"
+    },
+    {
+      "package": "libboost-serialization1.83.0",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-serialization1.83.0_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 351048,
+      "sha256": "b717dbf095cdd2cf7248026c8edd6764aeef50df1094822c76a9bf4ea8eb7a41"
+    },
+    {
+      "package": "libboost-system1.83-dev",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-system1.83-dev_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 231548,
+      "sha256": "03f2566a022a92e4baed4f62c23595a8f91b7ca425dc7c02c8bd5493d5c083b8"
+    },
+    {
+      "package": "libboost-system1.83.0",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-system1.83.0_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 235620,
+      "sha256": "06f43ddd8dabd0490615c40188d37be75b2acbb2e491317f25c8e64c6bd08d46"
+    },
+    {
+      "package": "libboost-thread1.83-dev",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-thread1.83-dev_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 419144,
+      "sha256": "9cba3d68b603d4e77670e5483164350f4d0e3599b6a6f315559059f7bf62b74c"
+    },
+    {
+      "package": "libboost-thread1.83.0",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost-thread1.83.0_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 277084,
+      "sha256": "6b1e82a1963356769be8a74d935f4ac226a127ff0c8ccd3105d46d238f186013"
+    },
+    {
+      "package": "libboost1.83-dev",
+      "version": "1.83.0-2.1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/boost1.83/libboost1.83-dev_1.83.0-2.1ubuntu3_riscv64.deb",
+      "size": 10746202,
+      "sha256": "49af7d7541809a3ff2cd9007f9ae8a1a63e0e1ee3051d6c8e62e97c91be39955"
+    },
+    {
+      "package": "libbz2-1.0",
+      "version": "1.0.8-5.1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/bzip2/libbz2-1.0_1.0.8-5.1_riscv64.deb",
+      "size": 40176,
+      "sha256": "081b99c518726527e52c2c4ea713f71c284b28f7943f02447a73c3eed2a9d61a"
+    },
+    {
+      "package": "libbz2-dev",
+      "version": "1.0.8-5.1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/b/bzip2/libbz2-dev_1.0.8-5.1_riscv64.deb",
+      "size": 86778,
+      "sha256": "8087861a62419b2e58ac746e13cca0a2646f7ac0cde6154534c265d6718c44ef"
+    },
+    {
+      "package": "libdouble-conversion-dev",
+      "version": "3.3.0-1build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/universe/d/double-conversion/libdouble-conversion-dev_3.3.0-1build1_riscv64.deb",
+      "size": 138334,
+      "sha256": "a70d9899e3a06c5602a8e68bc1e06b6ce79aeb054589dcb6daa2597c56ce5959"
+    },
+    {
+      "package": "libdouble-conversion3",
+      "version": "3.3.0-1build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/universe/d/double-conversion/libdouble-conversion3_3.3.0-1build1_riscv64.deb",
+      "size": 42226,
+      "sha256": "6b2f4341df64f23a25abe96bd5911939b8ea2d1071746babc405a0dde0015742"
+    },
+    {
+      "package": "libdwarf-dev",
+      "version": "20210528-1build2",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/universe/d/dwarfutils/libdwarf-dev_20210528-1build2_riscv64.deb",
+      "size": 1465552,
+      "sha256": "dacac5c7a3214c02ba10451796f14bf320ef008650ce027062fc5792300ec73a"
+    },
+    {
+      "package": "libdwarf1",
+      "version": "20210528-1build2",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/universe/d/dwarfutils/libdwarf1_20210528-1build2_riscv64.deb",
+      "size": 313094,
+      "sha256": "7842f115de0852c2dbbf1afe4c2b4921840e6a42b5018793e2602750c0cad8b6"
+    },
+    {
+      "package": "libelf1t64",
+      "version": "0.190-1.1build4",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/e/elfutils/libelf1t64_0.190-1.1build4_riscv64.deb",
+      "size": 63466,
+      "sha256": "65fd1490e8151358f7668dccbbf5b918306e1f2ff4f79a2f089c078f446eae7a"
+    },
+    {
+      "package": "libevent-2.1-7t64",
+      "version": "2.1.12-stable-9ubuntu2",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libe/libevent/libevent-2.1-7t64_2.1.12-stable-9ubuntu2_riscv64.deb",
+      "size": 151020,
+      "sha256": "5a94e2648715b1c71f35224250927f99d0cf3597ca5ab495a776c8106823bb3e"
+    },
+    {
+      "package": "libevent-core-2.1-7t64",
+      "version": "2.1.12-stable-9ubuntu2",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libe/libevent/libevent-core-2.1-7t64_2.1.12-stable-9ubuntu2_riscv64.deb",
+      "size": 95398,
+      "sha256": "7df8397058d9b4316e1a728a57a9cf23b546e1a13d9b6958f8e42368cdbfa531"
+    },
+    {
+      "package": "libevent-dev",
+      "version": "2.1.12-stable-9ubuntu2",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libe/libevent/libevent-dev_2.1.12-stable-9ubuntu2_riscv64.deb",
+      "size": 569862,
+      "sha256": "27d56110bceac1bccfad637029c88e58a615fd3b3ac5acd2619f37b0ca008c22"
+    },
+    {
+      "package": "libevent-extra-2.1-7t64",
+      "version": "2.1.12-stable-9ubuntu2",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libe/libevent/libevent-extra-2.1-7t64_2.1.12-stable-9ubuntu2_riscv64.deb",
+      "size": 67658,
+      "sha256": "d44a20aa671644b2dc40326d723ad613fbff66b0fd5a2c077431228cf8b92fdb"
+    },
+    {
+      "package": "libevent-openssl-2.1-7t64",
+      "version": "2.1.12-stable-9ubuntu2",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libe/libevent/libevent-openssl-2.1-7t64_2.1.12-stable-9ubuntu2_riscv64.deb",
+      "size": 15430,
+      "sha256": "16983b508ac00f3d8b9083c5e320c9317aa31412b55c21eb9123e0b245cc521d"
+    },
+    {
+      "package": "libevent-pthreads-2.1-7t64",
+      "version": "2.1.12-stable-9ubuntu2",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libe/libevent/libevent-pthreads-2.1-7t64_2.1.12-stable-9ubuntu2_riscv64.deb",
+      "size": 7924,
+      "sha256": "6e084227831c5fcf9c3daa80bef7ed333a994af4d27be2af7b832f650e03bad8"
+    },
+    {
+      "package": "libgflags-dev",
+      "version": "2.2.2-2build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/universe/g/gflags/libgflags-dev_2.2.2-2build1_riscv64.deb",
+      "size": 534374,
+      "sha256": "a540d3162c7f12db3daedef13fad65a68c7d2ba0ae7b7a0afb4ff12257ba3602"
+    },
+    {
+      "package": "libgflags2.2",
+      "version": "2.2.2-2build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/universe/g/gflags/libgflags2.2_2.2.2-2build1_riscv64.deb",
+      "size": 80428,
+      "sha256": "6ec6283014d374ab16967c8c4c1cc18caaa311a00988b19d37e996e2cdb28ba5"
+    },
+    {
+      "package": "libgoogle-glog-dev",
+      "version": "0.6.0-2.1build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/universe/g/google-glog/libgoogle-glog-dev_0.6.0-2.1build1_riscv64.deb",
+      "size": 284136,
+      "sha256": "a64bc8188d8dad13b30a76d1530f74bdbc60d5460c856e918124c0d3ad00c461"
+    },
+    {
+      "package": "libgoogle-glog0v6t64",
+      "version": "0.6.0-2.1build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/universe/g/google-glog/libgoogle-glog0v6t64_0.6.0-2.1build1_riscv64.deb",
+      "size": 66962,
+      "sha256": "c3c1c7ff890fdb9338a728040d8ecd477139944845b6252164015d555b6d3338"
+    },
+    {
+      "package": "libgoogle-perftools-dev",
+      "version": "2.15-3build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/g/google-perftools/libgoogle-perftools-dev_2.15-3build1_riscv64.deb",
+      "size": 1072170,
+      "sha256": "c10b5b2738a982a3f622cbdc3f1090e04a6e4992fae54e03c831260ad4bc869d"
+    },
+    {
+      "package": "libgoogle-perftools4t64",
+      "version": "2.15-3build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/g/google-perftools/libgoogle-perftools4t64_2.15-3build1_riscv64.deb",
+      "size": 218368,
+      "sha256": "cd5d522461f468575356e63d2eaf707c24393862786c2bf03c0bf9235b7f9a91"
+    },
+    {
+      "package": "libicu-dev",
+      "version": "74.2-1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/i/icu/libicu-dev_74.2-1ubuntu3_riscv64.deb",
+      "size": 17232050,
+      "sha256": "a7298e8e0587f84b13de8c88c7bc665d2125eb2699c6343636c4dc42ff49e1b3"
+    },
+    {
+      "package": "libicu74",
+      "version": "74.2-1ubuntu3",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/i/icu/libicu74_74.2-1ubuntu3_riscv64.deb",
+      "size": 10902376,
+      "sha256": "be2a39d021934801ec79404d8a3215b0750a5b2e41fdb32dfc6f5cdf6e9db6bb"
+    },
+    {
+      "package": "liblz4-1",
+      "version": "1.9.4-1build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/l/lz4/liblz4-1_1.9.4-1build1_riscv64.deb",
+      "size": 85726,
+      "sha256": "42d6110c2a09548ed6fe214ac37c98e47d0ea2f768e1ded95ad9d54a21c01e4d"
+    },
+    {
+      "package": "liblz4-dev",
+      "version": "1.9.4-1build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/l/lz4/liblz4-dev_1.9.4-1build1_riscv64.deb",
+      "size": 356680,
+      "sha256": "b3a7771ff64a9bbcea8ad396f52397d7e031f9b0774f282ba10ba2f011b0f65e"
+    },
+    {
+      "package": "liblzma-dev",
+      "version": "5.6.1+really5.4.5-1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/x/xz-utils/liblzma-dev_5.6.1+really5.4.5-1_riscv64.deb",
+      "size": 342780,
+      "sha256": "b2d73280f8ac6ee55ad9300da149f86388f547a03d57520d313541c8a361b5c5"
+    },
+    {
+      "package": "liblzma5",
+      "version": "5.6.1+really5.4.5-1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/x/xz-utils/liblzma5_5.6.1+really5.4.5-1_riscv64.deb",
+      "size": 130328,
+      "sha256": "8926967806311dcf069b6191641bf88f99484c79f9f235b9f68b60f2cd3fc487"
+    },
+    {
+      "package": "libnuma-dev",
+      "version": "2.0.18-1build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/n/numactl/libnuma-dev_2.0.18-1build1_riscv64.deb",
+      "size": 76116,
+      "sha256": "a28d7a6dbf1ce2030c00839ec6ea855374b647e34784ad229e7d1e3ba3058dd9"
+    },
+    {
+      "package": "libnuma1",
+      "version": "2.0.18-1build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/n/numactl/libnuma1_2.0.18-1build1_riscv64.deb",
+      "size": 25370,
+      "sha256": "1b9fecda119f2be743afeff42a42ae854fe7932f5b4d2f4cef8f25f1d39afec3"
+    },
+    {
+      "package": "libsnappy-dev",
+      "version": "1.1.10-1build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/s/snappy/libsnappy-dev_1.1.10-1build1_riscv64.deb",
+      "size": 76906,
+      "sha256": "49eb3fd83fe2ce7423fb9c0b7203a7ff190ef648a88a60ace44b761480354f4d"
+    },
+    {
+      "package": "libsnappy1v5",
+      "version": "1.1.10-1build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/s/snappy/libsnappy1v5_1.1.10-1build1_riscv64.deb",
+      "size": 31646,
+      "sha256": "d443a0047dba04dc159995331407a86bef131d5e3e93f20a434e559ebdada820"
+    },
+    {
+      "package": "libtcmalloc-minimal4t64",
+      "version": "2.15-3build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/g/google-perftools/libtcmalloc-minimal4t64_2.15-3build1_riscv64.deb",
+      "size": 97944,
+      "sha256": "faa0fe531df0b3a475215b4271b8782f2915f901bd1db0ba8b89561dfb8dfc65"
+    },
+    {
+      "package": "libunwind-dev",
+      "version": "1.6.2-3build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libu/libunwind/libunwind-dev_1.6.2-3build1_riscv64.deb",
+      "size": 801600,
+      "sha256": "42bef6c2bedfbe7e34c50bf85db8f6241629aad020cb2543916c6045e36e3d23"
+    },
+    {
+      "package": "libunwind8",
+      "version": "1.6.2-3build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libu/libunwind/libunwind8_1.6.2-3build1_riscv64.deb",
+      "size": 53320,
+      "sha256": "6f30029fff867a07b04ed2c1a0d1f8d99ae9ad976c2b48d1d6e41b05904b95ea"
+    },
+    {
+      "package": "libuv1-dev",
+      "version": "1.48.0-1.1build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libu/libuv1/libuv1-dev_1.48.0-1.1build1_riscv64.deb",
+      "size": 303086,
+      "sha256": "50b72acad8e31372c7e0e93472bfad9066001830f3e7ca1a25f6711a2fb4dba8"
+    },
+    {
+      "package": "libuv1t64",
+      "version": "1.48.0-1.1build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libu/libuv1/libuv1t64_1.48.0-1.1build1_riscv64.deb",
+      "size": 102014,
+      "sha256": "633dc94166362e2c750ca5a22d615ca4a8678fcb108ddbf07daea559c9885423"
+    },
+    {
+      "package": "libzstd1",
+      "version": "1.5.5+dfsg2-2build1",
+      "architecture": "riscv64",
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/libz/libzstd/libzstd1_1.5.5+dfsg2-2build1_riscv64.deb",
+      "size": 353394,
+      "sha256": "359bd96584abfafe5f57c7efec6b39f156b8eac4733a236249bbc43c8b09c473"
+    }
+  ],
+  "required_libraries": [
+    "usr/lib/riscv64-linux-gnu/libboost_context.a",
+    "usr/lib/riscv64-linux-gnu/libboost_filesystem.a",
+    "usr/lib/riscv64-linux-gnu/libboost_program_options.a",
+    "usr/lib/riscv64-linux-gnu/libboost_regex.a",
+    "usr/lib/riscv64-linux-gnu/libboost_system.a",
+    "usr/lib/riscv64-linux-gnu/libboost_thread.a",
+    "usr/lib/riscv64-linux-gnu/libuv.so",
+    "usr/lib/riscv64-linux-gnu/libnuma.so",
+    "usr/lib/riscv64-linux-gnu/libfuse3.so",
+    "usr/lib/libfdb_c.so",
+    "usr/lib/riscv64-linux-gnu/libssl.a",
+    "usr/lib/riscv64-linux-gnu/libcrypto.a",
+    "usr/lib/riscv64-linux-gnu/libevent.so",
+    "usr/lib/riscv64-linux-gnu/libgflags.so",
+    "usr/lib/riscv64-linux-gnu/libglog.so",
+    "usr/lib/riscv64-linux-gnu/libdouble-conversion.so",
+    "usr/lib/riscv64-linux-gnu/liblz4.so",
+    "usr/lib/riscv64-linux-gnu/liblzma.so",
+    "usr/lib/riscv64-linux-gnu/libdwarf.so",
+    "usr/lib/riscv64-linux-gnu/libunwind.so",
+    "usr/lib/riscv64-linux-gnu/libaio.so",
+    "usr/lib/riscv64-linux-gnu/libprofiler.so",
+    "usr/lib/riscv64-linux-gnu/libz.a",
+    "usr/riscv64-linux-gnu/lib/libatomic.so.1",
+    "usr/riscv64-linux-gnu/lib/libc.so.6",
+    "usr/riscv64-linux-gnu/lib/libstdc++.so.6"
+  ],
+  "rust_std": {
+    "version": "1.90.0",
+    "url": "https://static.rust-lang.org/dist/2025-09-18/rust-std-1.90.0-riscv64gc-unknown-linux-gnu.tar.xz",
+    "sha256": "675dc5556d9d879101d2401b693fcf79edac8f00a49249e2e0f19cecd172ce51"
+  }
+}

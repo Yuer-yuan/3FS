@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/utils/AtomicSharedPtr.h"
 #include "common/net/IOWorker.h"
 #include "common/net/Transport.h"
 #include "common/net/Waiter.h"
@@ -17,14 +18,14 @@ class ClientContext {
  public:
   ClientContext(net::IOWorker &ioWorker,
                 net::Address destAddr,
-                const folly::atomic_shared_ptr<const net::CoreRequestOptions> &options)
+                const hf3fs::AtomicSharedPtr<const net::CoreRequestOptions> &options)
       : connectionSource_(&ioWorker),
         destAddr_(destAddr),
         options_(options) {}
 
   ClientContext(net::sync::ConnectionPool &connectionPool,
                 net::Address destAddr,
-                const folly::atomic_shared_ptr<const net::CoreRequestOptions> &options)
+                const hf3fs::AtomicSharedPtr<const net::CoreRequestOptions> &options)
       : connectionSource_(&connectionPool),
         destAddr_(destAddr),
         options_(options) {}
@@ -61,8 +62,8 @@ class ClientContext {
     if (options.compression) {
       packet.flags |= EssentialFlags::UseCompress;
     }
-    if (options.enableRDMAControl) {
-      packet.flags |= EssentialFlags::ControlRDMA;
+    if (options.enableBulkControl) {
+      packet.flags |= EssentialFlags::ControlBulk;
     }
     if (timestamp != nullptr) {
       packet.timestamp = Timestamp{UtcClock::now().time_since_epoch().count()};
@@ -89,7 +90,7 @@ class ClientContext {
       if (item.status.code() == RPCCode::kTimeout && std::holds_alternative<net::IOWorker *>(connectionSource_)) {
         if (item.transport) {
           XLOGF(INFO, "req timeout and close transport {}", fmt::ptr(item.transport.get()));
-          co_await item.transport->closeIB();
+          co_await item.transport->closeDataPlane();
         } else {
           XLOGF(INFO, "req timeout but no transport");
         }
@@ -198,7 +199,7 @@ class ClientContext {
 
   std::variant<net::IOWorker *, net::sync::ConnectionPool *, net::Transport *> connectionSource_;
   net::Address destAddr_{};
-  const folly::atomic_shared_ptr<const net::CoreRequestOptions> &options_;
+  const hf3fs::AtomicSharedPtr<const net::CoreRequestOptions> &options_;
 };
 
 }  // namespace hf3fs::serde

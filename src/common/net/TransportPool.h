@@ -4,6 +4,7 @@
 #include <folly/ThreadLocal.h>
 
 #include "common/net/Transport.h"
+#include "common/utils/ConfigBase.h"
 #include "common/utils/RobinHood.h"
 #include "common/utils/Shards.h"
 
@@ -47,9 +48,9 @@ class TransportSet {
 };
 
 struct TransportCacheKey {
-  Address addr;
+  ServiceEndpoint endpoint;
   uint32_t idx;
-  bool operator==(const TransportCacheKey &o) const { return addr == o.addr && idx == o.idx; }
+  bool operator==(const TransportCacheKey &o) const { return endpoint == o.endpoint && idx == o.idx; }
 };
 
 }  // namespace hf3fs::net
@@ -57,7 +58,7 @@ struct TransportCacheKey {
 template <>
 struct std::hash<hf3fs::net::TransportCacheKey> {
   auto operator()(const hf3fs::net::TransportCacheKey &key) const {
-    return std::hash<hf3fs::net::Address>{}(key.addr) ^ key.idx;
+    return std::hash<hf3fs::net::ServiceEndpoint>{}(key.endpoint) ^ key.idx;
   }
 };
 
@@ -82,23 +83,25 @@ class TransportPool {
 
   // get the transport corresponding to the specified address. [thread-safe]
   // the bool value in pair indicates whether connecting is required.
-  std::pair<TransportPtr, bool> get(Address addr, IOWorker &io_worker);
+  std::pair<TransportPtr, bool> get(ServiceEndpoint endpoint, IOWorker &io_worker);
 
   // drop all connections.
   void dropConnections(bool dropAll = true, bool dropIncome = false);
 
   // drop all connections to this addr.
   void dropConnections(Address addr);
+  void dropConnections(ServiceEndpoint endpoint);
 
   // drop connetions to peer.
   void checkConnections(Address addr, Duration expiredTime);
+  void checkConnections(ServiceEndpoint endpoint, Duration expiredTime);
 
  private:
   const Config &config_;
 
   // sharding by address for better performance.
   constexpr static auto kShardsSize = 32u;
-  using Map = robin_hood::unordered_map<Address, TransportSet>;
+  using Map = robin_hood::unordered_map<ServiceEndpoint, TransportSet>;
   Shards<Map, kShardsSize> shards_;
 
   // thread local cache for better performance.

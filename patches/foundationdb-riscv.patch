@@ -1,0 +1,369 @@
+diff --git a/bindings/c/CMakeLists.txt b/bindings/c/CMakeLists.txt
+index b1e0ef1..4e93948 100644
+--- a/bindings/c/CMakeLists.txt
++++ b/bindings/c/CMakeLists.txt
+@@ -21,6 +21,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "a
+   set(cpu "aarch64")
+ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ppc64le|powerpc64le)")
+   set(cpu "ppc64le")
++elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^riscv64")
++  set(cpu "riscv64")
+ endif()
+ 
+ set(IS_ARM_MAC NO)
+diff --git a/bindings/c/generate_asm.py b/bindings/c/generate_asm.py
+index 71a3bbf..7eca4ef 100755
+--- a/bindings/c/generate_asm.py
++++ b/bindings/c/generate_asm.py
+@@ -28,7 +28,7 @@ import sys
+ functions = {}
+ 
+ func_re = re.compile(
+-    "^\s*FDB_API_(?:CHANGED|REMOVED)\s*\(\s*([^,]*),\s*([^)]*)\).*")
++    r"^\s*FDB_API_(?:CHANGED|REMOVED)\s*\(\s*([^,]*),\s*([^)]*)\).*")
+ 
+ with open(source, 'r') as srcfile:
+     for line in srcfile:
+@@ -59,7 +59,7 @@ def write_windows_asm(asmfile, functions):
+ 
+ 
+ def write_unix_asm(asmfile, functions, prefix):
+-    if cpu != "aarch64" and cpu != "ppc64le":
++    if cpu != "aarch64" and cpu != "ppc64le" and cpu != "riscv64":
+         asmfile.write(".intel_syntax noprefix\n")
+ 
+     i = 0
+@@ -124,6 +124,17 @@ def write_unix_asm(asmfile, functions, prefix):
+                 assert False, '{} not supported for Arm yet'.format(os)
+             asmfile.write("\tldr x8, [x8]\n")
+             asmfile.write("\tbr x8\n")
++        elif cpu == "riscv64":
++            assert os == 'linux', '{} not supported for RISC-V yet'.format(os)
++            # t0 is caller-saved and is not an integer or floating-point
++            # argument register.  Keep all arguments intact and tail-call the
++            # selected version through the PIC/GOT address of its pointer.
++            asmfile.write("\t.option push\n")
++            asmfile.write("\t.option pic\n")
++            asmfile.write("\tla t0, fdb_api_ptr_%s\n" % (f))
++            asmfile.write("\tld t0, 0(t0)\n")
++            asmfile.write("\tjr t0\n")
++            asmfile.write("\t.option pop\n")
+         elif cpu == "ppc64le":
+             asmfile.write("\n.LCF%d:\n" % (i))
+             asmfile.write("\taddis 2,12,.TOC.-.LCF%d@ha\n" % (i))
+diff --git a/cmake/FDBComponents.cmake b/cmake/FDBComponents.cmake
+index cd27f95..07a5f33 100644
+--- a/cmake/FDBComponents.cmake
++++ b/cmake/FDBComponents.cmake
+@@ -190,6 +190,17 @@ else()
+       -DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}
+       -DCMAKE_C_COMPILER:FILEPATH=${CMAKE_C_COMPILER}
+       -DCMAKE_CXX_COMPILER:FILEPATH=${CMAKE_CXX_COMPILER}
++      -DCMAKE_SYSTEM_NAME:STRING=${CMAKE_SYSTEM_NAME}
++      -DCMAKE_SYSTEM_PROCESSOR:STRING=${CMAKE_SYSTEM_PROCESSOR}
++      -DCMAKE_SYSROOT:PATH=${CMAKE_SYSROOT}
++      "-DCMAKE_FIND_ROOT_PATH:PATH=${CMAKE_FIND_ROOT_PATH}"
++      -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM:STRING=${CMAKE_FIND_ROOT_PATH_MODE_PROGRAM}
++      -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY:STRING=${CMAKE_FIND_ROOT_PATH_MODE_LIBRARY}
++      -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE:STRING=${CMAKE_FIND_ROOT_PATH_MODE_INCLUDE}
++      -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE:STRING=${CMAKE_FIND_ROOT_PATH_MODE_PACKAGE}
++      -DCMAKE_TRY_COMPILE_TARGET_TYPE:STRING=${CMAKE_TRY_COMPILE_TARGET_TYPE}
++      -DCMAKE_LIBRARY_ARCHITECTURE:STRING=${CMAKE_LIBRARY_ARCHITECTURE}
++      "-DCMAKE_SYSTEM_LIBRARY_PATH:STRING=${CMAKE_SYSTEM_LIBRARY_PATH}"
+       -DCMAKE_INSTALL_PREFIX:PATH=${CMAKE_CURRENT_BINARY_DIR}/toml11
+       -Dtoml11_BUILD_TEST:BOOL=OFF
+     BUILD_ALWAYS ON)
+diff --git a/contrib/crc32/crc32c.cpp b/contrib/crc32/crc32c.cpp
+index 9c3ae6d..d96c2c1 100644
+--- a/contrib/crc32/crc32c.cpp
++++ b/contrib/crc32/crc32c.cpp
+@@ -29,8 +29,12 @@
+ #define __unixish__ 1
+ #endif
+ 
++#if defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)
++#define CRC32C_X86 1
++#endif
++
+ #ifdef __unixish__
+-#if !defined(__aarch64__) && !defined(__powerpc64__)
++#ifdef CRC32C_X86
+ #include <cpuid.h>
+ #endif
+ #endif
+@@ -41,7 +45,7 @@
+ 
+ #include "crc32/crc32c.h"
+ 
+-#if !defined(__aarch64__) && !defined(__powerpc64__)
++#ifdef CRC32C_X86
+ #include <nmmintrin.h>
+ #endif
+ #include <stdio.h>
+@@ -71,8 +75,7 @@ static inline uint64_t hwCrc32cU64(uint64_t crc, uint64_t v) {
+ 	return ret;
+ }
+ #endif
+-#else
+-#ifndef __powerpc64__
++#elif defined(CRC32C_X86)
+ // Intel
+ #define hwCrc32cU8(c, v) _mm_crc32_u8(c, v)
+ #define hwCrc32cU32(c, v) _mm_crc32_u32(c, v)
+@@ -80,7 +83,6 @@ static inline uint64_t hwCrc32cU64(uint64_t crc, uint64_t v) {
+ #define hwCrc32cU64(c, v) _mm_crc32_u64(c, v)
+ #endif
+ #endif
+-#endif
+ 
+ [[maybe_unused]] static uint32_t append_trivial(uint32_t crc, const uint8_t* input, size_t length) {
+ 	for (size_t i = 0; i < length; ++i) {
+@@ -178,11 +180,11 @@ static inline uint32_t shift_crc(uint32_t shift_table[][256], uint32_t crc) {
+ }
+ 
+ /* Compute CRC-32C using the hardware instruction. */
+-#if (defined(__clang__) || defined(__GNUG__) && !defined(__aarch64__) && !defined(__powerpc64__))
++#if defined(CRC32C_X86) && (defined(__clang__) || defined(__GNUG__))
+ /* Enable SSE CEC instructions on Intel processor */
+ __attribute__((target("sse4.2")))
+ #endif
+-#ifndef __powerpc64__
++#if defined(__aarch64__) || defined(CRC32C_X86)
+ static uint32_t
+ append_hw(uint32_t crc, const uint8_t* buf, size_t len) {
+ 	const uint8_t* next = buf;
+@@ -332,10 +334,12 @@ bool isHwCrcSupported() {
+ 	return true; /* force to use crc instructions */
+ #elif defined(__powerpc64__)
+ 	return false; /* force not to use crc instructions */
+-#elif defined(__unixish__)
++#elif defined(CRC32C_X86) && defined(__unixish__)
+ 	uint32_t eax, ebx, ecx, edx, level = 1, count = 0;
+ 	__cpuid_count(level, count, eax, ebx, ecx, edx);
+ 	return ((ecx >> 20) & 1) != 0;
++#elif defined(__unixish__)
++	return false;
+ #else
+ #error Port me!
+ #endif
+@@ -344,13 +348,12 @@ bool isHwCrcSupported() {
+ static bool hw_available = isHwCrcSupported();
+ 
+ extern "C" uint32_t crc32c_append(uint32_t crc, const uint8_t* input, size_t length) {
+-	if (hw_available) {
+ #ifdef __powerpc64__
++	if (hw_available)
+ 		return ppc_hw(crc, input, length);
+-#endif
+-#ifndef __powerpc64__
++#elif defined(__aarch64__) || defined(CRC32C_X86)
++	if (hw_available)
+ 		return append_hw(crc, input, length);
+ #endif
+-	} else
+-		return append_table(crc, input, length);
++	return append_table(crc, input, length);
+ }
+diff --git a/contrib/stacktrace/stacktrace.amalgamation.cpp b/contrib/stacktrace/stacktrace.amalgamation.cpp
+index 5c4045d..fc850aa 100644
+--- a/contrib/stacktrace/stacktrace.amalgamation.cpp
++++ b/contrib/stacktrace/stacktrace.amalgamation.cpp
+@@ -186,6 +186,9 @@ private:
+ #define ABSL_STACKTRACE_INL_HEADER "stacktrace_internal/stacktrace_unimplemented-inl.inc"
+ #elif defined(_WIN32) // windows
+ #define ABSL_STACKTRACE_INL_HEADER "stacktrace_internal/stacktrace_win32-inl.inc"
++#elif defined(__linux__) && defined(__riscv)
++// RISC-V has no hand-written unwinder here; use glibc's execinfo backtrace.
++#define ABSL_STACKTRACE_INL_HEADER "stacktrace_internal/stacktrace_generic-inl.inc"
+ 
+ // Finally, test NO_FRAME_POINTER.
+ #elif !defined(NO_FRAME_POINTER)
+@@ -2006,6 +2009,8 @@ inline T ANNOTATE_UNPROTECTED_READ(const volatile T& x) { /* NOLINT */
+ 
+ #endif /* ABSL_BASE_DYNAMIC_ANNOTATIONS_H_ */
+ 
++#include <cassert>
++
+ #define ABSL_RAW_CHECK(cond, msg) assert((cond) && (msg))
+ #define ABSL_RAW_LOG(sev, ...)                                                                                         \
+ 	do {                                                                                                               \
+diff --git a/fdbserver/include/fdbserver/art.h b/fdbserver/include/fdbserver/art.h
+index 27dbbbc..94d3585 100644
+--- a/fdbserver/include/fdbserver/art.h
++++ b/fdbserver/include/fdbserver/art.h
+@@ -67,6 +67,7 @@ struct art_tree {
+ // This is needed so that we can pre-allocate a static stack to perform efficient backtracking in iterative_bound
+ #define ART_MAX_KEY_LEN 10000
+ 
++#if !defined(__riscv)
+ #define _mm_cmpge_epu8(a, b) _mm_cmpeq_epi8(_mm_max_epu8(a, b), a)
+ 
+ #define _mm_cmple_epu8(a, b) _mm_cmpge_epu8(b, a)
+@@ -74,6 +75,7 @@ struct art_tree {
+ #define _mm_cmpgt_epu8(a, b) _mm_xor_si128(_mm_cmple_epu8(a, b), _mm_set1_epi8(-1))
+ 
+ #define _mm_cmplt_epu8(a, b) _mm_cmpgt_epu8(b, a)
++#endif
+ 
+ #define ART_MAX_PREFIX_LEN 10
+ 
+diff --git a/fdbserver/include/fdbserver/art_impl.h b/fdbserver/include/fdbserver/art_impl.h
+index b8e6816..62247e0 100644
+--- a/fdbserver/include/fdbserver/art_impl.h
++++ b/fdbserver/include/fdbserver/art_impl.h
+@@ -461,8 +461,15 @@ art_node** art_tree::find_child(art_node* n, unsigned char c) {
+ 		{
+ 		case ART_NODE16:
+ 		case ART_NODE16_KV:
+-			__m128i cmp;
+ 			p.p2 = (art_node16*)n;
++#if defined(__riscv)
++			for (i = 0; i < n->num_children; ++i) {
++				if (p.p2->keys[i] == c) {
++					return &p.p2->children[i];
++				}
++			}
++#else
++			__m128i cmp;
+ 
+ 			// Compare the key to all 16 stored keys
+ 			cmp = _mm_cmpeq_epi8(_mm_set1_epi8(c), _mm_loadu_si128((__m128i*)p.p2->keys));
+@@ -478,6 +485,7 @@ art_node** art_tree::find_child(art_node* n, unsigned char c) {
+ 			 */
+ 			if (bitfield)
+ 				return &p.p2->children[ctz(bitfield)];
++#endif
+ 			break;
+ 		}
+ 
+@@ -572,8 +580,16 @@ void art_tree::find_next(art_node* n, unsigned char c, art_node** out) {
+ 		{
+ 		case ART_NODE16:
+ 		case ART_NODE16_KV:
+-			__m128i cmp;
+ 			p.p2 = (art_node16*)n;
++#if defined(__riscv)
++			for (i = 0; i < n->num_children; ++i) {
++				if (p.p2->keys[i] > c) {
++					*out = p.p2->children[i];
++					break;
++				}
++			}
++#else
++			__m128i cmp;
+ 			// We did not find the child corresponding to the key. Let's see if we have a next at least
+ 			// Compare the key to all 16 stored keys for Greater than
+ 			cmp = _mm_cmplt_epu8(_mm_set1_epi8(c), _mm_loadu_si128((__m128i*)p.p2->keys));
+@@ -588,6 +604,7 @@ void art_tree::find_next(art_node* n, unsigned char c, art_node** out) {
+ 				int one = ctz(bitfield);
+ 				*out = p.p2->children[one];
+ 			}
++#endif
+ 			break;
+ 		}
+ 	case ART_NODE48:
+@@ -1337,6 +1354,16 @@ void art_tree::add_child48(art_node48* n, art_node** ref, unsigned char c, void*
+ 
+ void art_tree::add_child16(art_node16* n, art_node** ref, unsigned char c, void* child) {
+ 	if (n->n.num_children < 16) {
++#if defined(__riscv)
++		unsigned idx = 0;
++		while (idx < n->n.num_children && n->keys[idx] < c) {
++			++idx;
++		}
++		if (idx < n->n.num_children) {
++			memmove(n->keys + idx + 1, n->keys + idx, n->n.num_children - idx);
++			memmove(n->children + idx + 1, n->children + idx, (n->n.num_children - idx) * sizeof(void*));
++		}
++#else
+ 		__m128i cmp;
+ 
+ 		// Compare the key to all 16 stored keys
+@@ -1354,6 +1381,7 @@ void art_tree::add_child16(art_node16* n, art_node** ref, unsigned char c, void*
+ 			memmove(n->children + idx + 1, n->children + idx, (n->n.num_children - idx) * sizeof(void*));
+ 		} else
+ 			idx = n->n.num_children;
++#endif
+ 
+ 		// Set the child
+ 		n->keys[idx] = c;
+@@ -1498,12 +1526,22 @@ void art_tree::find_prev(art_node* n, unsigned char c, art_node** out) {
+ 		break;
+ 
+ 		{
+-			__m128i cmp;
+ 		case ART_NODE16_KV:
+ 		case ART_NODE16:
+ 
+ 			p.p2 = (art_node16*)n;
+-
++#if defined(__riscv)
++			for (i = n->num_children; i > 0; --i) {
++				if (p.p2->keys[i - 1] < c) {
++					*out = p.p2->children[i - 1];
++					break;
++				}
++			}
++			if (i == 0 && n->type == ART_NODE16_KV) {
++				*out = n;
++			}
++#else
++			__m128i cmp;
+ 			// Compare the key to all 16 stored keys for less than
+ 			cmp = _mm_cmpgt_epu8(_mm_set1_epi8(c), _mm_loadu_si128((__m128i*)p.p2->keys));
+ 
+@@ -1520,6 +1558,7 @@ void art_tree::find_prev(art_node* n, unsigned char c, art_node** out) {
+ 					*out = n;
+ 				}
+ 			}
++#endif
+ 
+ 			break;
+ 		}
+diff --git a/flow/Platform.actor.cpp b/flow/Platform.actor.cpp
+index 87c58cf..31851f7 100644
+--- a/flow/Platform.actor.cpp
++++ b/flow/Platform.actor.cpp
+@@ -102,7 +102,7 @@ static_assert(std::is_same<boost::asio::ip::address_v6::bytes_type, std::array<u
+ #include <unistd.h>
+ #include <sys/statvfs.h> /* Needed for disk capacity */
+ 
+-#if !defined(__aarch64__) && !defined(__powerpc64__)
++#if defined(__i386__) || defined(__x86_64__)
+ #include <cpuid.h>
+ #endif
+ 
+diff --git a/flow/include/flow/Platform.h b/flow/include/flow/Platform.h
+index 882376f..ac19174 100644
+--- a/flow/include/flow/Platform.h
++++ b/flow/include/flow/Platform.h
+@@ -483,6 +483,20 @@ inline static uint64_t timestampCounter() {
+ }
+ #elif defined(_powerpc64_)
+ #include <emmintrin.h>
++#elif defined(__riscv)
++#include <time.h>
++// Use a stable nanosecond clock so TSC_YIELD_TIME keeps a predictable scale.
++inline static uint64_t timestampCounter() {
++	struct timespec timer = {};
++	if (clock_gettime(CLOCK_MONOTONIC, &timer) != 0)
++		return 0;
++	return static_cast<uint64_t>(timer.tv_sec) * 1000000000ULL + static_cast<uint64_t>(timer.tv_nsec);
++}
++
++// Portable equivalents for the two x86 cache/spin hints used by Flow.
++#define _MM_HINT_T0 3
++#define _mm_prefetch(address, hint) __builtin_prefetch((address), 0, (hint))
++#define _mm_pause() __asm__ volatile("nop" ::: "memory")
+ #elif defined(__linux__)
+ #include <x86intrin.h>
+ #define timestampCounter() __rdtsc()
+@@ -549,7 +563,7 @@ inline static int64_t interlockedOr64(volatile int64_t* a, int64_t b) {
+ 	return _InterlockedOr64(a, b);
+ }
+ #elif defined(__GCC_HAVE_SYNC_COMPARE_AND_SWAP_8)
+-#ifndef __aarch64__
++#if !defined(__aarch64__) && !defined(__riscv)
+ #include <xmmintrin.h>
+ #endif
+ inline static int32_t interlockedIncrement(volatile int32_t* a) {

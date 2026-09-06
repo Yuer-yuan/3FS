@@ -80,7 +80,7 @@ enableChecksum = false
 
 [server.agent.storage_io.read.debug]
 bypass_disk_io = false
-bypass_rdma_xmit = false
+bypass_bulk_xmit = false
 inject_random_client_error = false
 inject_random_server_error = false
 max_num_of_injection_points = 100
@@ -101,7 +101,7 @@ enableChecksum = true
 
 [server.agent.storage_io.write.debug]
 bypass_disk_io = false
-bypass_rdma_xmit = false
+bypass_bulk_xmit = false
 inject_random_client_error = false
 inject_random_server_error = false
 max_num_of_injection_points = 100
@@ -127,40 +127,23 @@ default_compression_threshold = '128KB'
 default_log_long_running_threshold = '0ns'
 default_send_retry_times = 1
 default_timeout = '1s'
-enable_rdma_control = false
+enable_bulk_control = false
 force_use_tcp = false
 
 [server.background_client.io_worker]
 num_event_loop = 1
-rdma_connect_timeout = '5s'
-read_write_rdma_in_event_thread = false
+data_connect_timeout = '5s'
+read_write_data_in_event_thread = false
 read_write_tcp_in_event_thread = false
 tcp_connect_timeout = '1s'
 wait_to_retry_send = '100ms'
 
+[server.background_client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [server.background_client.io_worker.connect_concurrency_limiter]
 max_concurrency = 4
-
-[server.background_client.io_worker.ibsocket]
-buf_ack_batch = 8
-buf_signal_batch = 8
-buf_size = 16384
-drain_timeout = '5s'
-drop_connections = 0
-event_ack_batch = 128
-max_rd_atomic = 16
-max_rdma_wr = 128
-max_rdma_wr_per_post = 32
-max_sge = 16
-min_rnr_timer = 1
-record_bytes_per_peer = false
-record_latency_per_peer = false
-retry_cnt = 7
-rnr_retry = 0
-send_buf_cnt = 32
-sl = 0
-start_psn = 0
-timeout = 14
 
 [server.background_client.io_worker.transport_pool]
 max_connections = 1
@@ -172,7 +155,7 @@ max_processing_requests_num = 4096
 response_compression_level = 1
 response_compression_threshold = '128KB'
 
-[server.background_client.rdma_control]
+[server.background_client.bulk_control]
 max_concurrent_transmission = 64
 
 [server.background_client.thread_pool]
@@ -212,40 +195,20 @@ proc_thread_pool_stratetry = 'SHARED_QUEUE'
 check_connections_interval = '1min'
 connection_expiration_time = '1day'
 network_type = 'LOCAL'
+service_plane = 'Control'
 services = [ 'ClientAgentSerde' ]
 use_independent_thread_pool = false
 
 [server.base.groups.io_worker]
 num_event_loop = 1
-rdma_connect_timeout = '5s'
-read_write_rdma_in_event_thread = false
+data_connect_timeout = '5s'
+read_write_data_in_event_thread = false
 read_write_tcp_in_event_thread = false
 tcp_connect_timeout = '1s'
 wait_to_retry_send = '100ms'
 
 [server.base.groups.io_worker.connect_concurrency_limiter]
 max_concurrency = 4
-
-[server.base.groups.io_worker.ibsocket]
-buf_ack_batch = 8
-buf_signal_batch = 8
-buf_size = 16384
-drain_timeout = '5s'
-drop_connections = 0
-event_ack_batch = 128
-max_rd_atomic = 16
-max_rdma_wr = 128
-max_rdma_wr_per_post = 32
-max_sge = 16
-min_rnr_timer = 1
-record_bytes_per_peer = false
-record_latency_per_peer = false
-retry_cnt = 7
-rnr_retry = 0
-send_buf_cnt = 32
-sl = 0
-start_psn = 0
-timeout = 14
 
 [server.base.groups.io_worker.transport_pool]
 max_connections = 1
@@ -269,40 +232,20 @@ response_compression_threshold = '128KB'
 check_connections_interval = '1min'
 connection_expiration_time = '1day'
 network_type = 'TCP'
+service_plane = 'Control'
 services = [ 'Core' ]
 use_independent_thread_pool = true
 
 [server.base.groups.io_worker]
 num_event_loop = 1
-rdma_connect_timeout = '5s'
-read_write_rdma_in_event_thread = false
+data_connect_timeout = '5s'
+read_write_data_in_event_thread = false
 read_write_tcp_in_event_thread = false
 tcp_connect_timeout = '1s'
 wait_to_retry_send = '100ms'
 
 [server.base.groups.io_worker.connect_concurrency_limiter]
 max_concurrency = 4
-
-[server.base.groups.io_worker.ibsocket]
-buf_ack_batch = 8
-buf_signal_batch = 8
-buf_size = 16384
-drain_timeout = '5s'
-drop_connections = 0
-event_ack_batch = 128
-max_rd_atomic = 16
-max_rdma_wr = 128
-max_rdma_wr_per_post = 32
-max_sge = 16
-min_rnr_timer = 1
-record_bytes_per_peer = false
-record_latency_per_peer = false
-retry_cnt = 7
-rnr_retry = 0
-send_buf_cnt = 32
-sl = 0
-start_psn = 0
-timeout = 14
 
 [server.base.groups.io_worker.transport_pool]
 max_connections = 1
@@ -326,7 +269,7 @@ response_compression_threshold = '128KB'
 check_server_interval = '5s'
 dynamic_stripe = false
 max_concurrent_requests = 128
-network_type = 'RDMA'
+network_type = 'CXL'
 remove_chunks_batch_size = 32
 remove_chunks_max_iters = 1024
 selection_mode = 'RandomFollow'
@@ -386,40 +329,23 @@ default_compression_threshold = '128KB'
 default_log_long_running_threshold = '0ns'
 default_send_retry_times = 1
 default_timeout = '1s'
-enable_rdma_control = false
+enable_bulk_control = false
 force_use_tcp = false
 
 [server.storage.net_client.io_worker]
 num_event_loop = 1
-rdma_connect_timeout = '5s'
-read_write_rdma_in_event_thread = false
+data_connect_timeout = '5s'
+read_write_data_in_event_thread = false
 read_write_tcp_in_event_thread = false
 tcp_connect_timeout = '1s'
 wait_to_retry_send = '100ms'
 
+[server.storage.net_client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [server.storage.net_client.io_worker.connect_concurrency_limiter]
 max_concurrency = 4
-
-[server.storage.net_client.io_worker.ibsocket]
-buf_ack_batch = 8
-buf_signal_batch = 8
-buf_size = 16384
-drain_timeout = '5s'
-drop_connections = 0
-event_ack_batch = 128
-max_rd_atomic = 16
-max_rdma_wr = 128
-max_rdma_wr_per_post = 32
-max_sge = 16
-min_rnr_timer = 1
-record_bytes_per_peer = false
-record_latency_per_peer = false
-retry_cnt = 7
-rnr_retry = 0
-send_buf_cnt = 32
-sl = 0
-start_psn = 0
-timeout = 14
 
 [server.storage.net_client.io_worker.transport_pool]
 max_connections = 1
@@ -431,7 +357,7 @@ max_processing_requests_num = 4096
 response_compression_level = 1
 response_compression_threshold = '128KB'
 
-[server.storage.net_client.rdma_control]
+[server.storage.net_client.bulk_control]
 max_concurrent_transmission = 64
 
 [server.storage.net_client.thread_pool]
@@ -451,40 +377,23 @@ default_compression_threshold = '128KB'
 default_log_long_running_threshold = '0ns'
 default_send_retry_times = 1
 default_timeout = '1s'
-enable_rdma_control = false
+enable_bulk_control = false
 force_use_tcp = false
 
 [server.storage.net_client_for_updates.io_worker]
 num_event_loop = 1
-rdma_connect_timeout = '5s'
-read_write_rdma_in_event_thread = false
+data_connect_timeout = '5s'
+read_write_data_in_event_thread = false
 read_write_tcp_in_event_thread = false
 tcp_connect_timeout = '1s'
 wait_to_retry_send = '100ms'
 
+[server.storage.net_client_for_updates.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [server.storage.net_client_for_updates.io_worker.connect_concurrency_limiter]
 max_concurrency = 4
-
-[server.storage.net_client_for_updates.io_worker.ibsocket]
-buf_ack_batch = 8
-buf_signal_batch = 8
-buf_size = 16384
-drain_timeout = '5s'
-drop_connections = 0
-event_ack_batch = 128
-max_rd_atomic = 16
-max_rdma_wr = 128
-max_rdma_wr_per_post = 32
-max_sge = 16
-min_rnr_timer = 1
-record_bytes_per_peer = false
-record_latency_per_peer = false
-retry_cnt = 7
-rnr_retry = 0
-send_buf_cnt = 32
-sl = 0
-start_psn = 0
-timeout = 14
 
 [server.storage.net_client_for_updates.io_worker.transport_pool]
 max_connections = 1
@@ -496,7 +405,7 @@ max_processing_requests_num = 4096
 response_compression_level = 1
 response_compression_threshold = '128KB'
 
-[server.storage.net_client_for_updates.rdma_control]
+[server.storage.net_client_for_updates.bulk_control]
 max_concurrent_transmission = 64
 
 [server.storage.net_client_for_updates.thread_pool]

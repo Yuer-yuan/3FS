@@ -32,7 +32,7 @@ class Forward {
  public:
   struct Config : ConfigBase<Config> {
     CONFIG_HOT_UPDATED_ITEM(debug, true);
-    CONFIG_HOT_UPDATED_ITEM(addr_type, net::Address::Type::RDMA);
+    CONFIG_HOT_UPDATED_ITEM(addr_type, net::Address::Type::CXL);
     CONFIG_HOT_UPDATED_ITEM(timeout, 10_s);
   };
 

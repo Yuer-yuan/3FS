@@ -1,6 +1,6 @@
 #pragma once
 
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 #include <mutex>
 #include <optional>
 #include <set>
@@ -71,6 +71,6 @@ struct AtomicSharedPtrTable {
   }
 
   AvailSlots slots;
-  std::vector<folly::atomic_shared_ptr<T>> table;
+  std::vector<hf3fs::AtomicSharedPtr<T>> table;
 };
 };  // namespace hf3fs

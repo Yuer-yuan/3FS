@@ -9,6 +9,7 @@
 #include "common/net/MessageHeader.h"
 #include "common/net/Network.h"
 #include "common/net/Transport.h"
+#include "common/net/TransportEvidence.h"
 #include "common/net/Waiter.h"
 #include "common/serde/CallContext.h"
 #include "common/serde/MessagePacket.h"
@@ -72,8 +73,8 @@ class Processor {
     }
   }
 
-  void setFrozen(bool frozen, bool isRDMA) {
-    auto flags = (isRDMA ? kFrozenRDMA : kFrozenTCP);
+  void setFrozen(bool frozen, ServicePlane plane) {
+    auto flags = (plane == ServicePlane::Data ? kFrozenData : kFrozenControl);
     if (frozen) {
       flags_ |= flags;
     } else {
@@ -110,6 +111,7 @@ class Processor {
   Result<Void> decompressSerdeMsg(IOBufPtr &buf, TransportPtr &tr);
 
   void unpackSerdeMsg(IOBufPtr buf, uint32_t checksumIn, TransportPtr tr) {
+    const auto wireBytes = buf->length() + kMessageHeaderSize;
     // 1. check checksum. (without timestamp part)
     bool isCompressed = MessageHeader::isCompressed(checksumIn);
     auto checksum = Checksum::calcSerde(buf->data(), buf->length(), isCompressed);
@@ -136,6 +138,8 @@ class Processor {
       return;
     }
 
+    TransportEvidence::process().rpc(tr->kind(), tr->servicePlane(), packet.serviceId, packet.isRequest(), wireBytes);
+
     // 2. check this message is request or response.
     if (packet.timestamp) {
       if (packet.isRequest()) {
@@ -151,6 +155,7 @@ class Processor {
     } else {
       // is response.
       XLOGF(DBG, "receive response {}:{}", packet.serviceId, packet.methodId);
+      tr->completePublication(packet.uuid);
       Waiter::instance().post(packet, std::move(buf));
     }
   }
@@ -160,7 +165,7 @@ class Processor {
     auto guard = folly::makeGuard([&] { flags_ -= kCountInc; });
 
     (void)buf;  // keep alive.
-    auto &service = serdeServices_.getServiceById(packet.serviceId, tr->isRDMA());
+    auto &service = serdeServices_.getServiceById(packet.serviceId, tr->servicePlane());
     serde::CallContext ctx(packet, std::move(tr), service);
     if (packet.useCompress()) {
       ctx.responseOptions().compression = {config_.response_compression_level(),
@@ -175,7 +180,7 @@ class Processor {
       refuseSerdeRequest(packet, std::move(tr), flags);
       return;
     }
-    if (UNLIKELY(isFrozen(flags, tr->isRDMA()))) {
+    if (UNLIKELY(isFrozen(flags, tr->servicePlane()))) {
       // do nothing and return.
       return;
     }
@@ -198,7 +203,7 @@ class Processor {
     auto msg =
         fmt::format("Refuse requests, stopped: {}, processing: {}", isStopped(flags), processingRequestsNum(flags));
     XLOG(WARN, msg);
-    auto &service = serdeServices_.getServiceById(packet.serviceId, tr->isRDMA());
+    auto &service = serdeServices_.getServiceById(packet.serviceId, tr->servicePlane());
     serde::CallContext ctx(packet, std::move(tr), service);
     ctx.onError(makeError(RPCCode::kRequestRefused, msg));
   }
@@ -207,7 +212,9 @@ class Processor {
     return isStopped(flags) || processingRequestsNum(flags) >= config_.max_processing_requests_num();
   }
   inline bool isStopped(size_t flags) const { return flags & kStopFlag; }
-  inline bool isFrozen(size_t flags, bool isRDMA) const { return flags & (isRDMA ? kFrozenRDMA : kFrozenTCP); }
+  inline bool isFrozen(size_t flags, ServicePlane plane) const {
+    return flags & (plane == ServicePlane::Data ? kFrozenData : kFrozenControl);
+  }
   inline size_t processingRequestsNum(size_t flags) const { return flags / kCountInc; }
 
  private:
@@ -218,8 +225,8 @@ class Processor {
   CoroutinesPoolGetter coroutinesPoolGetter_{};
 
   constexpr static size_t kStopFlag = 1;
-  constexpr static size_t kFrozenTCP = 2;
-  constexpr static size_t kFrozenRDMA = 4;
+  constexpr static size_t kFrozenControl = 2;
+  constexpr static size_t kFrozenData = 4;
   constexpr static size_t kCountInc = 8;
   std::atomic<size_t> flags_{0};
 };

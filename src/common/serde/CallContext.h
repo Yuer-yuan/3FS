@@ -1,7 +1,10 @@
 #pragma once
 
+#include "common/net/BulkTransfer.h"
 #include "common/net/Transport.h"
+#if HF3FS_ENABLE_RDMA
 #include "common/net/ib/IBSocket.h"
+#endif
 #include "common/serde/MessagePacket.h"
 #include "common/utils/Coroutine.h"
 #include "common/utils/Size.h"
@@ -40,6 +43,12 @@ class CallContext {
   CoTask<void> invalidId() {
     XLOGF(INFO, "method {}:{} not found!", packet_.serviceId, packet_.methodId);
     onError(makeError(RPCCode::kInvalidMethodID));
+    co_return;
+  }
+
+  CoTask<void> invalidService() {
+    XLOGF(INFO, "service {} not found!", packet_.serviceId);
+    onError(makeError(RPCCode::kInvalidServiceID));
     co_return;
   }
 
@@ -91,6 +100,32 @@ class CallContext {
 
   tracing::Points &tracingPoints() { return tracingPoints_; }
 
+  class BulkTransmission {
+   public:
+    BulkTransmission(CallContext &ctx, net::BulkDirection direction)
+        : ctx_(ctx),
+          batch_(ctx_.tr_->bulkTransfer(), direction) {}
+
+    Result<Void> add(const net::RemoteBufferHandle &remoteBuffer, net::SharedBuffer localBuffer) {
+      return batch_.add(remoteBuffer, std::move(localBuffer));
+    }
+
+    Result<Void> add(const net::RemoteBufferHandle &remoteBuffer, std::span<net::SharedBuffer> localBuffers) {
+      return batch_.add(remoteBuffer, localBuffers);
+    }
+
+    CoTask<void> applyTransmission(Duration timeout);
+    CoTryTask<void> post() { return batch_.post(); }
+
+   private:
+    CallContext &ctx_;
+    net::BulkTransferBatch batch_;
+  };
+
+  BulkTransmission pullTransmission() { return BulkTransmission{*this, net::BulkDirection::Pull}; }
+  BulkTransmission pushTransmission() { return BulkTransmission{*this, net::BulkDirection::Push}; }
+
+#if HF3FS_ENABLE_RDMA
   class RDMATransmission {
    public:
     RDMATransmission(CallContext &ctx, ibv_wr_opcode opcode)
@@ -112,9 +147,10 @@ class CallContext {
 
   RDMATransmission readTransmission() { return RDMATransmission{*this, IBV_WR_RDMA_READ}; }
   RDMATransmission writeTransmission() { return RDMATransmission{*this, IBV_WR_RDMA_WRITE}; }
+#endif
 
  private:
-  static MethodType invalidServiceId(uint16_t) { return &CallContext::invalidId; }
+  static MethodType invalidServiceId(uint16_t) { return &CallContext::invalidService; }
 
   void makeResponse(const auto &payload) {
     MessagePacket send(payload);

@@ -33,7 +33,6 @@
 #include <folly/logging/xlog.h>
 #include <folly/net/NetworkSocket.h>
 #include <functional>
-#include <gtest/gtest_prod.h>
 #include <infiniband/verbs.h>
 #include <limits>
 #include <map>
@@ -123,6 +122,8 @@ class IBSocket : public Socket, folly::MoveOnly {
 
   IBSocket(const Config &config, IBPort port = {});
   ~IBSocket() override;
+
+  TransportKind kind() const noexcept final { return TransportKind::RDMA; }
 
   CoTryTask<void> connect(serde::ClientContext &ctx, Duration timeout);
   Result<Void> accept(folly::IPAddressV4 ip, const IBConnectReq &req, Duration acceptTimeout = 15_s);

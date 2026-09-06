@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/utils/AtomicSharedPtr.h"
 #include "common/net/sync/ConnectionPool.h"
 #include "common/serde/ClientContext.h"
 
@@ -37,7 +38,7 @@ class Client {
   const Config &config_;
   ConnectionPool connectionPool_;
   std::unique_ptr<ConfigCallbackGuard> clientConfigGuard_;
-  folly::atomic_shared_ptr<const CoreRequestOptions> options_{std::make_shared<CoreRequestOptions>()};
+  hf3fs::AtomicSharedPtr<const CoreRequestOptions> options_{std::make_shared<CoreRequestOptions>()};
 };
 
 }  // namespace hf3fs::net::sync

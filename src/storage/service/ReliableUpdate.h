@@ -11,6 +11,10 @@
 #include "fbs/storage/Common.h"
 #include "storage/service/TargetMap.h"
 
+namespace hf3fs::serde {
+class CallContext;
+}
+
 namespace hf3fs::storage {
 
 struct Components;
@@ -28,7 +32,7 @@ class ReliableUpdate {
 
   CoTask<IOResult> update(ServiceRequestContext &requestCtx,
                           UpdateReq &req,
-                          net::IBSocket *ibSocket,
+                          serde::CallContext *ctx,
                           TargetPtr &target);
 
   Result<Void> cleanUpExpiredClients(const robin_hood::unordered_set<std::string> &activeClients);

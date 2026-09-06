@@ -1,8 +1,8 @@
 #pragma once
 
 #include "client/storage/StorageMessenger.h"
+#include "common/net/Buffer.h"
 #include "common/net/Client.h"
-#include "common/net/ib/RDMABuf.h"
 #include "common/utils/ConfigBase.h"
 #include "fbs/storage/Common.h"
 #include "storage/update/UpdateJob.h"
@@ -33,7 +33,9 @@ class ReliableForwarding {
 
   CoTask<IOResult> forwardWithRetry(ServiceRequestContext &requestCtx,
                                     const UpdateReq &req,
-                                    const net::RDMARemoteBuf &rdmabuf,
+                                    const net::RemoteBufferHandle &remoteBuf,
+                                    const std::shared_ptr<void> &remoteLifetime,
+                                    const uint8_t *forwardingData,
                                     const ChunkEngineUpdateJob &chunkEngineJob,
                                     TargetPtr &target,
                                     CommitIO &commitIO,
@@ -41,14 +43,18 @@ class ReliableForwarding {
 
   CoTask<IOResult> forward(const UpdateReq &req,
                            uint32_t retryCount,
-                           const net::RDMARemoteBuf &rdmabuf,
+                           net::RemoteBufferHandle &remoteBuf,
+                           std::shared_ptr<void> &remoteLifetime,
+                           const uint8_t *forwardingData,
                            const ChunkEngineUpdateJob &chunkEngineJob,
                            TargetPtr &target,
                            CommitIO &commitIO,
                            std::chrono::milliseconds timeout);
 
   CoTask<IOResult> doForward(const UpdateReq &req,
-                             const net::RDMARemoteBuf &rdmabuf,
+                             net::RemoteBufferHandle &remoteBuf,
+                             std::shared_ptr<void> &remoteLifetime,
+                             const uint8_t *forwardingData,
                              const ChunkEngineUpdateJob &chunkEngineJob,
                              uint32_t retryCount,
                              const Target &target,

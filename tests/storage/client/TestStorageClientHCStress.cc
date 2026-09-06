@@ -40,9 +40,11 @@ class TestStorageClientHCStress : public UnitTestFabric, public ::testing::TestW
 #endif
 
     // init ib device
+#if HF3FS_ENABLE_RDMA
     net::IBDevice::Config ibConfig;
     auto ibResult = net::IBManager::start(ibConfig);
     ASSERT_OK(ibResult);
+#endif
 
     auto testConfig = GetParam();
 

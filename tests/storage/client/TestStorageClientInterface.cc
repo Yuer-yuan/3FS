@@ -17,10 +17,12 @@ class TestStorageClientInterface : public UnitTestFabric, public ::testing::Test
       : UnitTestFabric(GetParam()) {}
 
   void SetUp() override {
+#if HF3FS_ENABLE_RDMA
     // init ib device
     net::IBDevice::Config ibConfig;
     auto ibResult = net::IBManager::start(ibConfig);
     ASSERT_OK(ibResult);
+#endif
     ASSERT_TRUE(setUpStorageSystem());
 
     clientConfig_.retry().set_init_wait_time(30_s);

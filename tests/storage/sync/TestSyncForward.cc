@@ -34,9 +34,11 @@ class TestSyncForward : public UnitTestFabric, public ::testing::Test {
         }) {}
 
   void SetUp() override {
+#if HF3FS_ENABLE_RDMA
     net::IBDevice::Config ibConfig;
     auto ibResult = net::IBManager::start(ibConfig);
     ASSERT_OK(ibResult);
+#endif
     ASSERT_TRUE(setUpStorageSystem());
   }
 
@@ -86,7 +88,7 @@ TEST_F(TestSyncForward, ForwardToSyncingTarget) {
   });
 
   std::this_thread::sleep_for(2000_ms);  // wait sync start.
-  RoutingStoreHelper::refreshRoutingInfo(*storageServers_.back());
+  storageServers_.back()->refreshRoutingInfo();
 
   // 5. second write.
   {
@@ -105,11 +107,11 @@ TEST_F(TestSyncForward, ForwardToSyncingTarget) {
 
   for (auto waitTimes = 0_s; waitTimes < 10_s; waitTimes += 1_s) {
     std::this_thread::sleep_for(1_s);  // wait sync done.
-    if (TargetMapHelper::checkLocalTargetState(*storageServers_.back(), flat::LocalTargetState::UPTODATE)) {
+    if (storageServers_.back()->checkLocalTargetState(flat::LocalTargetState::UPTODATE)) {
       break;
     }
   }
-  ASSERT_TRUE(TargetMapHelper::checkLocalTargetState(*storageServers_.back(), flat::LocalTargetState::UPTODATE));
+  ASSERT_TRUE(storageServers_.back()->checkLocalTargetState(flat::LocalTargetState::UPTODATE));
 
   // 6. update routing info.
   updateRoutingInfo([&](auto &routingInfo) {
@@ -306,11 +308,11 @@ TEST_F(TestSyncForward, SyncingBatch) {
 
   for (auto waitTimes = 0_s; waitTimes < 30_s; waitTimes += 1_s) {
     std::this_thread::sleep_for(1_s);  // wait sync done.
-    if (TargetMapHelper::checkLocalTargetState(*storageServers_.back(), flat::LocalTargetState::UPTODATE)) {
+    if (storageServers_.back()->checkLocalTargetState(flat::LocalTargetState::UPTODATE)) {
       break;
     }
   }
-  ASSERT_TRUE(TargetMapHelper::checkLocalTargetState(*storageServers_.back(), flat::LocalTargetState::UPTODATE));
+  ASSERT_TRUE(storageServers_.back()->checkLocalTargetState(flat::LocalTargetState::UPTODATE));
 
   XLOGF(WARNING, "9. online the last server.");
   updateRoutingInfo([&](auto &routingInfo) {

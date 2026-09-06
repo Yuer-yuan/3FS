@@ -4,8 +4,9 @@
 #include <fmt/format.h>
 
 #include "common/monitor/Recorder.h"
-#include "common/net/RDMAControl.h"
+#include "common/net/BulkControl.h"
 #include "common/net/RequestOptions.h"
+#include "common/net/TransportRuntime.h"
 #include "common/utils/Duration.h"
 #include "common/utils/Result.h"
 #include "common/utils/SemaphoreGuard.h"
@@ -119,12 +120,19 @@ CoTryTask<BatchReadRsp> StorageOperator::batchRead(ServiceRequestContext &reques
     totalLength += it->readIO().length;
     totalHeadLength += it->state().headLength;
     totalTailLength += it->state().tailLength;
-    if (FAULT_INJECTION_POINT(requestCtx.debugFlags.injectServerError(),
-                              true,
-                              UNLIKELY(it->readIO().length > it->readIO().rdmabuf.size()))) {
-      auto msg = fmt::format("invalid read buffer size {}", it->readIO());
-      XLOG(ERR, msg);
-      co_return makeError(StatusCode::kInvalidArg, std::move(msg));
+    if (!BITFLAGS_CONTAIN(req.featureFlags, FeatureFlags::SEND_DATA_INLINE) &&
+        !BITFLAGS_CONTAIN(req.featureFlags, FeatureFlags::BYPASS_BULK_XMIT)) {
+      auto valid = net::validateRemoteBufferHandle(it->readIO().remoteBuf);
+      if (FAULT_INJECTION_POINT(
+              requestCtx.debugFlags.injectServerError(),
+              true,
+              UNLIKELY(!valid ||
+                       it->readIO().remoteBuf.transportKind != static_cast<uint8_t>(ctx.transport()->kind()) ||
+                       it->readIO().remoteBuf.length != it->readIO().length))) {
+        auto msg = fmt::format("invalid read buffer handle {}", it->readIO());
+        XLOG(ERR, msg);
+        co_return makeError(StatusCode::kInvalidArg, std::move(msg));
+      }
     }
     it->state().readUncommitted = BITFLAGS_CONTAIN(req.featureFlags, FeatureFlags::ALLOW_READ_UNCOMMITTED);
   }
@@ -137,7 +145,7 @@ CoTryTask<BatchReadRsp> StorageOperator::batchRead(ServiceRequestContext &reques
   prepareTargetRecordGuard.report(true);
 
   auto prepareBufferRecordGuard = storageReadPrepareBuffer.record();
-  auto buffer = components_.rdmabufPool.get();
+  auto buffer = components_.bufferPool.get();
   for (AioReadJobIterator it(&batch); it; it++) {
     auto &job = *it;
     auto allocateResult = buffer.tryAllocate(job.alignedLength());
@@ -147,7 +155,7 @@ CoTryTask<BatchReadRsp> StorageOperator::batchRead(ServiceRequestContext &reques
     if (UNLIKELY(!allocateResult)) {
       auto msg = fmt::format("read allocate buffer failed, req {}, length {}", job.readIO(), job.alignedLength());
       XLOG(ERR, msg);
-      co_return makeError(RPCCode::kRDMANoBuf, std::move(msg));
+      co_return makeError(RPCCode::kNoSharedBuffer, std::move(msg));
     }
     job.state().localbuf = std::move(*allocateResult);
     job.state().bufferIndex = buffer.index();
@@ -175,46 +183,36 @@ CoTryTask<BatchReadRsp> StorageOperator::batchRead(ServiceRequestContext &reques
 
   if (BITFLAGS_CONTAIN(req.featureFlags, FeatureFlags::SEND_DATA_INLINE)) {
     batch.copyToRespBuffer(rsp.inlinebuf.data);
-  } else if (!BITFLAGS_CONTAIN(req.featureFlags, FeatureFlags::BYPASS_RDMAXMIT)) {
-    auto ibSocket = ctx.transport()->ibSocket();
-    if (UNLIKELY(ibSocket == nullptr)) {
-      XLOGF(ERR, "batch read no RDMA socket");
-      co_return makeError(StatusCode::kInvalidArg, "batch read no RDMA socket");
+  } else if (!BITFLAGS_CONTAIN(req.featureFlags, FeatureFlags::BYPASS_BULK_XMIT)) {
+    if (UNLIKELY(ctx.transport()->bulkTransfer() == nullptr)) {
+      XLOGF(ERR, "batch read transport has no bulk transfer capability");
+      co_return makeError(RPCCode::kTransportCapabilityMissing);
     }
 
     auto waitBatchRecordGuard = storageWaitBatchRecorder.record();
-    auto writeBatch = ctx.writeTransmission();
+    auto writeBatch = ctx.pushTransmission();
     batch.addBufferToBatch(writeBatch);
     waitBatchRecordGuard.report(true);
 
-    auto rdmaSemaphoreIter = concurrentRdmaWriteSemaphore_.find(ibSocket->device()->id());
-    if (rdmaSemaphoreIter == concurrentRdmaWriteSemaphore_.end()) {
-      XLOGF(CRITICAL,
-            "Cannot find RDMA operation semaphore for IB device #{} {}",
-            ibSocket->device()->id(),
-            ibSocket->device()->name());
-      co_return makeError(RPCCode::kIBDeviceNotFound);
-    }
-
-    auto RDMATransmissionReqTimeout = config_.rdma_transmission_req_timeout();
+    auto bulkTransmissionReqTimeout = config_.bulk_transmission_req_timeout();
     bool applyTransmissionBeforeGettingSemaphore = config_.apply_transmission_before_getting_semaphore();
-    if (ctx.packet().controlRDMA() && RDMATransmissionReqTimeout != 0_ms && applyTransmissionBeforeGettingSemaphore) {
-      co_await writeBatch.applyTransmission(RDMATransmissionReqTimeout);
+    if (ctx.packet().controlBulk() && bulkTransmissionReqTimeout != 0_ms && applyTransmissionBeforeGettingSemaphore) {
+      co_await writeBatch.applyTransmission(bulkTransmissionReqTimeout);
     }
 
-    auto ibdevTagSet = monitor::instanceTagSet(ibSocket->device()->name());
-    auto waitSemRecordGuard = storageWaitSemRecorder.record(ibdevTagSet);
-    SemaphoreGuard guard(rdmaSemaphoreIter->second);
+    auto dataPlaneTagSet = monitor::instanceTagSet("cxl");
+    auto waitSemRecordGuard = storageWaitSemRecorder.record(dataPlaneTagSet);
+    SemaphoreGuard guard(concurrentBulkWriteSemaphore_);
     co_await guard.coWait();
     waitSemRecordGuard.report(true);
 
-    if (ctx.packet().controlRDMA() && RDMATransmissionReqTimeout != 0_ms && !applyTransmissionBeforeGettingSemaphore) {
-      co_await writeBatch.applyTransmission(RDMATransmissionReqTimeout);
+    if (ctx.packet().controlBulk() && bulkTransmissionReqTimeout != 0_ms && !applyTransmissionBeforeGettingSemaphore) {
+      co_await writeBatch.applyTransmission(bulkTransmissionReqTimeout);
     }
 
-    auto waitPostRecordGuard = storageWaitPostRecorder.record(ibdevTagSet);
+    auto waitPostRecordGuard = storageWaitPostRecorder.record(dataPlaneTagSet);
     auto postResult = FAULT_INJECTION_POINT(requestCtx.debugFlags.injectServerError(),
-                                            makeError(RPCCode::kRDMAPostFailed),
+                                            makeError(RPCCode::kBulkPostFailed),
                                             (co_await writeBatch.post()));
     if (UNLIKELY(!postResult)) {
       for (AioReadJobIterator it(&batch); it; it++) {
@@ -232,7 +230,7 @@ CoTryTask<BatchReadRsp> StorageOperator::batchRead(ServiceRequestContext &reques
 
 CoTryTask<WriteRsp> StorageOperator::write(ServiceRequestContext &requestCtx,
                                            const WriteReq &req,
-                                           net::IBSocket *ibSocket) {
+                                           serde::CallContext *ctx) {
   auto recordGuard = storageReqWriteRecorder.record(monitor::instanceTagSet(std::to_string(req.userInfo.uid)));
 
   XLOGF(DBG1,
@@ -255,9 +253,16 @@ CoTryTask<WriteRsp> StorageOperator::write(ServiceRequestContext &requestCtx,
   }
   auto target = std::move(*targetResult);
 
-  UpdateReq updateReq{req.payload, {}, req.tag, req.retryCount, req.userInfo, req.featureFlags};
+  UpdateReq updateReq{req.payload,
+                      {},
+                      req.tag,
+                      req.retryCount,
+                      req.userInfo,
+                      req.featureFlags,
+                      req.debugFlags,
+                      req.requestLifetime};
   updateReq.options.fromClient = true;
-  rsp.result = co_await components_.reliableUpdate.update(requestCtx, updateReq, ibSocket, target);
+  rsp.result = co_await components_.reliableUpdate.update(requestCtx, updateReq, ctx, target);
   if (LIKELY(bool(rsp.result.lengthInfo))) {
     XLOGF_IF(DFATAL,
              *rsp.result.lengthInfo != req.payload.length,
@@ -283,7 +288,7 @@ CoTryTask<WriteRsp> StorageOperator::write(ServiceRequestContext &requestCtx,
 
 CoTryTask<UpdateRsp> StorageOperator::update(ServiceRequestContext &requestCtx,
                                              const UpdateReq &updateReq,
-                                             net::IBSocket *ibSocket) {
+                                             serde::CallContext *ctx) {
   auto recordGuard = storageReqUpdateRecorder.record(monitor::instanceTagSet(std::to_string(updateReq.userInfo.uid)));
 
   auto req = updateReq;
@@ -308,9 +313,9 @@ CoTryTask<UpdateRsp> StorageOperator::update(ServiceRequestContext &requestCtx,
   auto target = std::move(*targetResult);
 
   if (req.payload.updateType == UpdateType::REMOVE && req.tag.channel.id == ChannelId{0}) {
-    rsp.result = co_await handleUpdate(requestCtx, req, ibSocket, target);
+    rsp.result = co_await handleUpdate(requestCtx, req, ctx, target);
   } else {
-    rsp.result = co_await components_.reliableUpdate.update(requestCtx, req, ibSocket, target);
+    rsp.result = co_await components_.reliableUpdate.update(requestCtx, req, ctx, target);
   }
 
   if (LIKELY(bool(rsp.result.lengthInfo))) {
@@ -332,7 +337,7 @@ CoTryTask<UpdateRsp> StorageOperator::update(ServiceRequestContext &requestCtx,
 
 CoTask<IOResult> StorageOperator::handleUpdate(ServiceRequestContext &requestCtx,
                                                UpdateReq &req,
-                                               net::IBSocket *ibSocket,
+                                               serde::CallContext *ctx,
                                                TargetPtr &target) {
   // 1. get target.
   if (UNLIKELY(req.options.fromClient && !target->isHead)) {
@@ -389,16 +394,18 @@ CoTask<IOResult> StorageOperator::handleUpdate(ServiceRequestContext &requestCtx
   ChunkEngineUpdateJob chunkEngineJob{};
 
   // 3. update local target.
-  auto buffer = components_.rdmabufPool.get();
-  net::RDMARemoteBuf remoteBuf;
+  auto buffer = components_.bufferPool.get();
+  net::RemoteBufferHandle remoteBuf;
+  std::shared_ptr<void> remoteLifetime;
+  const uint8_t *forwardingData = nullptr;
   auto updateResult = co_await doUpdate(requestCtx,
                                         req.payload,
                                         req.options,
                                         req.featureFlags,
                                         target->storageTarget,
-                                        ibSocket,
+                                        ctx,
                                         buffer,
-                                        remoteBuf,
+                                        forwardingData,
                                         chunkEngineJob,
                                         !(req.options.fromClient && target->rejectCreateChunk));
   trace->updateRes = updateResult;
@@ -446,8 +453,14 @@ CoTask<IOResult> StorageOperator::handleUpdate(ServiceRequestContext &requestCtx
   commitIO.commitVer = updateResult.updateVer;
   commitIO.isRemove = req.payload.isRemove();
 
-  auto forwardResult = co_await components_.reliableForwarding
-                           .forwardWithRetry(requestCtx, req, remoteBuf, chunkEngineJob, target, commitIO);
+  auto forwardResult = co_await components_.reliableForwarding.forwardWithRetry(requestCtx,
+                                                                                req,
+                                                                                remoteBuf,
+                                                                                remoteLifetime,
+                                                                                forwardingData,
+                                                                                chunkEngineJob,
+                                                                                target,
+                                                                                commitIO);
   if (UNLIKELY(commitIO.commitVer != updateResult.updateVer)) {
     auto msg = fmt::format("commit version mismatch, req: {}, successor {} != local {}",
                            req,
@@ -523,9 +536,9 @@ CoTask<IOResult> StorageOperator::doUpdate(ServiceRequestContext &requestCtx,
                                            const UpdateOptions &updateOptions,
                                            uint32_t featureFlags,
                                            const std::shared_ptr<StorageTarget> &target,
-                                           net::IBSocket *ibSocket,
+                                           serde::CallContext *ctx,
                                            BufferPool::Buffer &buffer,
-                                           net::RDMARemoteBuf &remoteBuf,
+                                           const uint8_t *&forwardingData,
                                            ChunkEngineUpdateJob &chunkEngineJob,
                                            bool allowToAllocate) {
   auto recordGuard = storageDoUpdateRecorder.record();
@@ -541,59 +554,57 @@ CoTask<IOResult> StorageOperator::doUpdate(ServiceRequestContext &requestCtx,
       co_return makeError(StorageClientCode::kFoundBug, std::move(msg));
     }
     job.state().data = updateIO.inlinebuf.data.data();
+    forwardingData = job.state().data;
   } else if (updateIO.isWrite()) {
-    if (UNLIKELY(ibSocket == nullptr)) {
-      auto msg = fmt::format("update no RDMA socket, io: {}", updateIO);
+    auto valid = net::validateRemoteBufferHandle(updateIO.remoteBuf);
+    if (UNLIKELY(ctx == nullptr || ctx->transport()->bulkTransfer() == nullptr || !valid ||
+                 updateIO.remoteBuf.transportKind != static_cast<uint8_t>(ctx->transport()->kind()) ||
+                 updateIO.remoteBuf.length != updateIO.length)) {
+      auto msg = fmt::format("update has no valid bulk transport or handle, io: {}", updateIO);
       XLOG(ERR, msg);
       co_return makeError(StatusCode::kInvalidArg, std::move(msg));
     }
 
-    auto allocateResult = buffer.tryAllocate(updateIO.rdmabuf.size());
+    auto allocateResult = buffer.tryAllocate(updateIO.length);
     if (UNLIKELY(!allocateResult)) {
-      allocateResult = co_await buffer.allocate(updateIO.rdmabuf.size());
+      allocateResult = co_await buffer.allocate(updateIO.length);
     }
     if (UNLIKELY(!allocateResult)) {
       auto msg = fmt::format("write allocate buffer failed, req {}, error {}, length {}",
                              updateIO,
                              allocateResult.error(),
-                             updateIO.rdmabuf.size());
+                             updateIO.length);
       XLOG(ERR, msg);
-      co_return makeError(RPCCode::kRDMANoBuf, std::move(msg));
+      co_return makeError(RPCCode::kNoSharedBuffer, std::move(msg));
     }
-    job.state().data = allocateResult->ptr();
-    remoteBuf = allocateResult->toRemoteBuf();
-    if (!BITFLAGS_CONTAIN(featureFlags, FeatureFlags::BYPASS_RDMAXMIT)) {
-      auto readBatch = ibSocket->rdmaReadBatch();
-      auto batchAddResult = readBatch.add(updateIO.rdmabuf, std::move(*allocateResult));
+    job.state().data = allocateResult->data();
+    forwardingData = job.state().data;
+    if (!BITFLAGS_CONTAIN(featureFlags, FeatureFlags::BYPASS_BULK_XMIT)) {
+      auto readBatch = ctx->pullTransmission();
+      auto batchAddResult = readBatch.add(updateIO.remoteBuf, *allocateResult);
       if (UNLIKELY(!batchAddResult)) {
         XLOGF(ERR, "write add to batch failed, req {}, error {}", updateIO, batchAddResult.error());
         co_return makeError(batchAddResult.error());
       }
 
-      auto rdmaSemaphoreIter = concurrentRdmaReadSemaphore_.find(ibSocket->device()->id());
-      if (rdmaSemaphoreIter == concurrentRdmaReadSemaphore_.end()) {
-        auto msg = fmt::format("Cannot find RDMA operation semaphore for IB device #{} {}",
-                               ibSocket->device()->id(),
-                               ibSocket->device()->name());
-        XLOG(CRITICAL, msg);
-        co_return makeError(RPCCode::kIBDeviceNotFound, std::move(msg));
-      }
-
-      auto ibdevTagSet = monitor::instanceTagSet(ibSocket->device()->name());
-      auto waitSemRecordGuard = storageWriteWaitSemRecorder.record(ibdevTagSet);
-      SemaphoreGuard guard(rdmaSemaphoreIter->second);
+      auto dataPlaneTagSet = monitor::instanceTagSet("cxl");
+      auto waitSemRecordGuard = storageWriteWaitSemRecorder.record(dataPlaneTagSet);
+      SemaphoreGuard guard(concurrentBulkReadSemaphore_);
       co_await guard.coWait();
       waitSemRecordGuard.report(true);
 
-      auto waitPostRecordGuard = storageWriteWaitPostRecorder.record(ibdevTagSet);
+      auto waitPostRecordGuard = storageWriteWaitPostRecorder.record(dataPlaneTagSet);
       auto postResult = co_await readBatch.post();
       if (UNLIKELY(!postResult)) {
-        XLOGF(ERR, "write post RDMA failed, req {}, error {}", updateIO, postResult.error());
+        XLOGF(ERR, "write post bulk transfer failed, req {}, error {}", updateIO, postResult.error());
         co_return makeError(std::move(postResult.error()));
       } else {
         waitPostRecordGuard.report(true);
       }
     }
+
+    // Keep the disk buffer alive in handleUpdate. A chain tail needs no CXL
+    // export; ReliableForwarding prepares one only for an actual successor.
   }
 
   if (BITFLAGS_CONTAIN(featureFlags, FeatureFlags::BYPASS_DISKIO)) {
@@ -764,11 +775,11 @@ CoTask<IOResult> StorageOperator::doTruncate(ServiceRequestContext &requestCtx,
                     op.chunkLen,
                     op.chunkSize,
                     GlobalKey{op.vChainId, op.chunkId},
-                    {} /*rdmabuf*/,
+                    {} /*remoteBuf*/,
                     ChunkVer(0) /*updateVer*/,
                     op.onlyExtendChunk ? UpdateType::EXTEND : UpdateType::TRUNCATE,
                     ChecksumInfo{ChecksumType::NONE, 0}};
-  UpdateReq updateReq{updateIO, {}, op.tag, op.retryCount, userInfo, featureFlags};
+  UpdateReq updateReq{updateIO, {}, op.tag, op.retryCount, userInfo, featureFlags, DebugFlags{}, {}};
   updateReq.options.fromClient = true;
 
   // get target for truncate from client.
@@ -780,7 +791,7 @@ CoTask<IOResult> StorageOperator::doTruncate(ServiceRequestContext &requestCtx,
   }
   auto target = std::move(*targetResult);
 
-  auto updateRes = co_await components_.reliableUpdate.update(requestCtx, updateReq, nullptr /*ibSocket*/, target);
+  auto updateRes = co_await components_.reliableUpdate.update(requestCtx, updateReq, nullptr /*callContext*/, target);
 
   XLOGF_IF(ERR,
            updateRes.lengthInfo.hasError(),
@@ -814,11 +825,11 @@ CoTask<IOResult> StorageOperator::doRemove(ServiceRequestContext &requestCtx,
                     0 /*length*/,
                     0 /*chunkSize*/,
                     GlobalKey{op.vChainId, op.chunkIdRange.begin},
-                    {} /*rdmabuf*/,
+                    {} /*remoteBuf*/,
                     ChunkVer(0) /*updateVer*/,
                     UpdateType::REMOVE,
                     ChecksumInfo{ChecksumType::NONE, 0}};
-  UpdateReq updateReq{updateIO, {}, op.tag, op.retryCount, userInfo, featureFlags};
+  UpdateReq updateReq{updateIO, {}, op.tag, op.retryCount, userInfo, featureFlags, DebugFlags{}, {}};
   updateReq.options.fromClient = true;
 
   // get target for remove from client.
@@ -834,9 +845,9 @@ CoTask<IOResult> StorageOperator::doRemove(ServiceRequestContext &requestCtx,
   IOResult updateRes;
 
   if (op.tag.channel.id == ChannelId{0}) {
-    updateRes = co_await handleUpdate(requestCtx, updateReq, nullptr /*ibSocket*/, target);
+    updateRes = co_await handleUpdate(requestCtx, updateReq, nullptr /*callContext*/, target);
   } else {
-    updateRes = co_await components_.reliableUpdate.update(requestCtx, updateReq, nullptr /*ibSocket*/, target);
+    updateRes = co_await components_.reliableUpdate.update(requestCtx, updateReq, nullptr /*callContext*/, target);
   }
 
   XLOGF_IF(ERR,

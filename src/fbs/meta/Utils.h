@@ -143,7 +143,7 @@ struct ErrorHandling {
         switch (code) {
           case RPCCode::kSendFailed:
           case RPCCode::kConnectFailed:
-          case RPCCode::kIBInitFailed:
+          case RPCCode::kDataPlaneInitFailed:
           case RPCCode::kInvalidMethodID:
             return false;
           default:
@@ -304,7 +304,7 @@ struct RoutingInfoChecker {
   }
 
   template <typename T>
-  requires serde::SerdeType<T>
+    requires serde::SerdeType<T>
   static constexpr bool hasInode() {
     if constexpr (std::is_same_v<Inode, T>) {
       return true;
@@ -318,8 +318,10 @@ struct RoutingInfoChecker {
   }
 
   template <typename T>
-  requires is_variant_v<T>
-  static constexpr bool hasInode() { return variantHasInode<T>(); }
+    requires is_variant_v<T>
+  static constexpr bool hasInode() {
+    return variantHasInode<T>();
+  }
 
   template <typename T, size_t I = 0>
   static constexpr bool variantHasInode() {
@@ -333,16 +335,22 @@ struct RoutingInfoChecker {
   }
 
   template <typename T>
-  requires is_vector_v<T> || is_set_v<T>
-  static constexpr bool hasInode() { return hasInode<typename T::value_type>(); }
+    requires is_vector_v<T> || is_set_v<T>
+  static constexpr bool hasInode() {
+    return hasInode<typename T::value_type>();
+  }
 
   template <typename T>
-  requires is_map_v<T>
-  static constexpr bool hasInode() { return hasInode<typename T::key_type>() || hasInode<typename T::mapped_type>(); }
+    requires is_map_v<T>
+  static constexpr bool hasInode() {
+    return hasInode<typename T::key_type>() || hasInode<typename T::mapped_type>();
+  }
 
   template <typename T>
-  requires is_optional_v<T>
-  static constexpr bool hasInode() { return hasInode<typename T::value_type>(); }
+    requires is_optional_v<T>
+  static constexpr bool hasInode() {
+    return hasInode<typename T::value_type>();
+  }
 
   static bool checkRoutingInfo(const Inode &inode, const flat::RoutingInfo &routing) {
     if (inode.isFile()) {
@@ -375,7 +383,7 @@ struct RoutingInfoChecker {
   }
 
   template <typename T>
-  requires serde::SerdeType<T>
+    requires serde::SerdeType<T>
   static bool checkRoutingInfo(const T &t, const flat::RoutingInfo &routing) {
     if constexpr (!hasInode<T>()) {
       return true;
@@ -387,7 +395,7 @@ struct RoutingInfoChecker {
   }
 
   template <typename T>
-  requires is_variant_v<T>
+    requires is_variant_v<T>
   static bool checkRoutingInfo(const T &t, const flat::RoutingInfo &routing) {
     if constexpr (!hasInode<T>()) {
       return true;
@@ -396,7 +404,7 @@ struct RoutingInfoChecker {
   }
 
   template <typename T>
-  requires is_vector_v<T> || is_set_v<T>
+    requires is_vector_v<T> || is_set_v<T>
   static bool checkRoutingInfo(const T &t, const flat::RoutingInfo &routing) {
     if constexpr (!hasInode<T>()) {
       return true;
@@ -410,7 +418,7 @@ struct RoutingInfoChecker {
   }
 
   template <typename T>
-  requires is_map_v<T>
+    requires is_map_v<T>
   static bool checkRoutingInfo(const T &t, const flat::RoutingInfo &routing) {
     if constexpr (!hasInode<T>()) {
       return true;
@@ -424,7 +432,7 @@ struct RoutingInfoChecker {
   }
 
   template <typename T>
-  requires is_optional_v<T>
+    requires is_optional_v<T>
   static bool checkRoutingInfo(const T &t, const flat::RoutingInfo &routing) {
     if constexpr (!hasInode<T>()) {
       return true;

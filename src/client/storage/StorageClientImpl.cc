@@ -646,10 +646,35 @@ std::vector<Op *> selectRoutingTargetForOps(ClientRequestContext &requestCtx,
 
 /* Helper functions for building requests */
 
+struct RequestExportLeases {
+  std::vector<net::RemoteExportLease> leases;
+};
+
+Result<net::RemoteBufferHandle> exportRemoteRange(IOBuffer &buffer,
+                                                  uint8_t *data,
+                                                  size_t length,
+                                                  net::RemoteAccess access,
+                                                  std::shared_ptr<RequestExportLeases> &leases) {
+  if (!buffer.contains(data, length)) {
+    return makeError(StatusCode::kInvalidArg, "storage IO range escapes its registered buffer");
+  }
+  const size_t offset = static_cast<size_t>(data - buffer.data());
+  auto exported = buffer.exportRemote(offset, length, access);
+  if (!exported) {
+    return makeError(std::move(exported.error()));
+  }
+  if (!leases) {
+    leases = std::make_shared<RequestExportLeases>();
+  }
+  auto handle = exported->handle();
+  leases->leases.push_back(exported->takeLease());
+  return handle;
+}
+
 uint32_t buildFeatureFlagsFromOptions(const DebugOptions &debugOptions) {
   uint32_t featureFlags = 0;
   if (debugOptions.bypass_disk_io()) BITFLAGS_SET(featureFlags, hf3fs::storage::FeatureFlags::BYPASS_DISKIO);
-  if (debugOptions.bypass_rdma_xmit()) BITFLAGS_SET(featureFlags, hf3fs::storage::FeatureFlags::BYPASS_RDMAXMIT);
+  if (debugOptions.bypassBulkXmit()) BITFLAGS_SET(featureFlags, hf3fs::storage::FeatureFlags::BYPASS_BULK_XMIT);
   return featureFlags;
 }
 
@@ -667,14 +692,13 @@ BatchReq buildBatchRequest(const ClientRequestContext &requestCtx,
 
 // ReadIO
 
-template <>
-typename hf3fs::storage::BatchReadReq buildBatchRequest(const ClientRequestContext &requestCtx,
-                                                        const ClientId &clientId,
-                                                        std::atomic_uint64_t &nextRequestId,
-                                                        const StorageClient::Config &config,
-                                                        const ReadOptions &options,
-                                                        const flat::UserInfo &userInfo,
-                                                        const std::vector<ReadIO *> &ops) {
+Result<hf3fs::storage::BatchReadReq> buildBatchReadRequest(const ClientRequestContext &requestCtx,
+                                                           const ClientId &clientId,
+                                                           std::atomic_uint64_t &nextRequestId,
+                                                           const StorageClient::Config &config,
+                                                           const ReadOptions &options,
+                                                           const flat::UserInfo &userInfo,
+                                                           const std::vector<ReadIO *> &ops) {
   std::vector<hf3fs::storage::ReadIO> payloads;
   payloads.reserve(ops.size());
   size_t requestedBytes = 0;
@@ -687,14 +711,11 @@ typename hf3fs::storage::BatchReadReq buildBatchRequest(const ClientRequestConte
   for (auto &op : ops) {
     hf3fs::storage::GlobalKey key{op->routingTarget.getVersionedChainId(), op->chunkId};
 
-    size_t offset = op->data - op->buffer->data();
-    auto iobuf = op->buffer->subrange(offset, op->length);
-
     requestedBytes += op->length;
     tagged_bytes_per_operation->addSample(op->length);
 
     op->requestId = requestId;
-    payloads.push_back({op->offset, op->length, std::move(key), iobuf.toRemoteBuf()});
+    payloads.push_back({op->offset, op->length, std::move(key), {}});
   }
 
   bytes_per_request.addSample(requestedBytes, requestTagSet);
@@ -711,13 +732,30 @@ typename hf3fs::storage::BatchReadReq buildBatchRequest(const ClientRequestConte
     BITFLAGS_SET(featureFlags, hf3fs::storage::FeatureFlags::ALLOW_READ_UNCOMMITTED);
   }
 
-  return hf3fs::storage::BatchReadReq{std::move(payloads),
-                                      tag,
-                                      requestCtx.retryCount,
-                                      userInfo,
-                                      featureFlags,
-                                      checksumType,
-                                      requestCtx.debugFlags};
+  std::shared_ptr<RequestExportLeases> leases;
+  if (!BITFLAGS_CONTAIN(featureFlags, hf3fs::storage::FeatureFlags::SEND_DATA_INLINE)) {
+    for (size_t index = 0; index < ops.size(); ++index) {
+      auto remote = exportRemoteRange(*ops[index]->buffer,
+                                      ops[index]->data,
+                                      ops[index]->length,
+                                      net::RemoteAccess::Write,
+                                      leases);
+      if (!remote) {
+        return makeError(std::move(remote.error()));
+      }
+      payloads[index].remoteBuf = *remote;
+    }
+  }
+
+  hf3fs::storage::BatchReadReq request{std::move(payloads),
+                                       tag,
+                                       requestCtx.retryCount,
+                                       userInfo,
+                                       featureFlags,
+                                       checksumType,
+                                       requestCtx.debugFlags,
+                                       std::move(leases)};
+  return request;
 }
 
 // QueryLastChunkOp
@@ -834,6 +872,9 @@ CoTryTask<Rsp> StorageClientImpl::callMessengerMethod(StorageMessenger &messenge
   net::UserRequestOptions options;
   options.timeout = requestCtx.requestTimeout;
   options.sendRetryTimes = 1;
+  if constexpr (requires { request.requestLifetime; }) {
+    options.requestLifetime = request.requestLifetime;
+  }
 
   if (auto reqInfo = RequestInfo::get(); reqInfo && reqInfo->canceled()) {
     XLOGF(WARN, "Request {} {} canceled", reqInfo->describe(), fmt::ptr(&request));
@@ -842,7 +883,7 @@ CoTryTask<Rsp> StorageClientImpl::callMessengerMethod(StorageMessenger &messenge
 
   for (const auto &serviceGroup : nodeInfo.app.serviceGroups) {
     for (const auto &address : serviceGroup.endpoints) {
-      if (address.type == net::Address::Type::RDMA) {
+      if (address.type == net::Address::Type::CXL) {
         serde::Timestamp timestamp;
         auto response =
             FAULT_INJECTION_POINT(requestCtx.debugFlags.injectClientError(),
@@ -881,9 +922,8 @@ CoTryTask<Rsp> StorageClientImpl::callMessengerMethod(StorageMessenger &messenge
     }
   }
 
-  // No RDMA interface is found for the target node
-  XLOGF(DBG1, "No RDMA interface found on node: {:?}", nodeInfo);
-  co_return makeError(StorageClientCode::kNoRDMAInterface);
+  XLOGF(DBG1, "No CXL data-plane interface found on node: {:?}", nodeInfo);
+  co_return makeError(StorageClientCode::kNoDataPlaneInterface);
 }
 
 template <typename IO>
@@ -1583,7 +1623,7 @@ CoTryTask<void> StorageClientImpl::batchReadWithRetry(ClientRequestContext &requ
   const bool splitLargeIOs = maxIOBytes > 0;
   std::vector<ReadIO *> splittedIOs;
 
-  auto sendOps = [ this, &requestCtx, &userInfo, &options ](const std::vector<ReadIO *> &ops) -> auto{
+  auto sendOps = [this, &requestCtx, &userInfo, &options](const std::vector<ReadIO *> &ops) -> auto {
     return batchReadWithoutRetry(requestCtx, ops, userInfo, options);
   };
 
@@ -1678,13 +1718,14 @@ CoTryTask<void> StorageClientImpl::batchReadWithoutRetry(ClientRequestContext &r
     // log the waiting time before communication starts
     requestCtx.logWaitingTime();
 
-    auto batchReq = buildBatchRequest<ReadIO, BatchReadReq>(requestCtx,
-                                                            clientId_,
-                                                            nextRequestId_,
-                                                            config_,
-                                                            options,
-                                                            userInfo,
-                                                            batchIOs);
+    auto batchReqResult =
+        buildBatchReadRequest(requestCtx, clientId_, nextRequestId_, config_, options, userInfo, batchIOs);
+    if (!batchReqResult) {
+      XLOGF(ERR, "Cannot export CXL buffers for batch read: {}", batchReqResult.error());
+      setErrorCodeOfOps(batchIOs, StatusCodeConversion::convertToStorageClientCode(batchReqResult.error()).code());
+      co_return false;
+    }
+    auto batchReq = std::move(*batchReqResult);
 
     auto response =
         co_await sendBatchRequest<ReadIO, BatchReadReq, BatchReadRsp, &StorageMessenger::batchRead>(messenger_,
@@ -1714,6 +1755,18 @@ CoTryTask<void> StorageClientImpl::batchReadWithoutRetry(ClientRequestContext &r
       for (auto readIO : batchIOs) {
         std::memcpy(readIO->data, inlinebuf, readIO->resultLen());
         inlinebuf += readIO->resultLen();
+      }
+    } else if (response) {
+      for (auto readIO : batchIOs) {
+        if (!readIO->result.lengthInfo) {
+          continue;
+        }
+        const size_t offset = static_cast<size_t>(readIO->data - readIO->buffer->data());
+        auto copied = readIO->buffer->copyOut(offset, readIO->resultLen());
+        if (!copied) {
+          XLOGF(ERR, "Cannot copy CXL read result to the registered buffer: {}", copied.error());
+          setErrorCodeOfOp(readIO, StorageClientCode::kMemoryError);
+        }
       }
     }
 
@@ -1773,7 +1826,7 @@ CoTryTask<void> StorageClientImpl::batchWriteWithRetry(ClientRequestContext &req
                                                        const flat::UserInfo &userInfo,
                                                        const WriteOptions &options,
                                                        std::vector<WriteIO *> &failedIOs) {
-  auto sendOps = [ this, &requestCtx, userInfo, options ](const std::vector<WriteIO *> &ops) -> auto{
+  auto sendOps = [this, &requestCtx, userInfo, options](const std::vector<WriteIO *> &ops) -> auto {
     return batchWriteWithoutRetry(requestCtx, ops, userInfo, options);
   };
 
@@ -1868,9 +1921,6 @@ CoTryTask<void> StorageClientImpl::sendWriteRequest(ClientRequestContext &reques
                                             hf3fs::storage::ChainVer(writeIO->routingTarget.chainVer)};
   hf3fs::storage::GlobalKey key{vChainId, hf3fs::storage::ChunkId(writeIO->chunkId)};
 
-  size_t offset = writeIO->data - writeIO->buffer->data();
-  auto iobuf = writeIO->buffer->subrange(offset, writeIO->length);
-
   bytes_per_operation.addSample(writeIO->length, requestCtx.requestTagSet);
   bytes_per_request.addSample(writeIO->length, requestCtx.requestTagSet);
   ops_per_request.addSample(1, requestCtx.requestTagSet);
@@ -1885,22 +1935,36 @@ CoTryTask<void> StorageClientImpl::sendWriteRequest(ClientRequestContext &reques
   hf3fs::storage::RequestId requestId(writeIO->requestId);
   hf3fs::storage::MessageTag tag{clientId_, requestId, writeIO->routingTarget.channel};
   uint32_t featureFlags = buildFeatureFlagsFromOptions(options.debug());
+  const bool sendInline = writeIO->length <= requestCtx.clientConfig.max_inline_write_bytes();
+  net::RemoteBufferHandle remoteBuf{};
+  std::shared_ptr<RequestExportLeases> leases;
+  if (!sendInline) {
+    auto exported =
+        exportRemoteRange(*writeIO->buffer, writeIO->data, writeIO->length, net::RemoteAccess::Read, leases);
+    if (!exported) {
+      XLOGF(ERR, "Cannot export CXL buffer for write request: {}", exported.error());
+      setErrorCodeOfOp(writeIO, StorageClientCode::kMemoryError);
+      co_return Void{};
+    }
+    remoteBuf = *exported;
+  }
 
   hf3fs::storage::UpdateIO payload{writeIO->offset,
                                    writeIO->length,
                                    writeIO->chunkSize,
                                    key,
-                                   iobuf.toRemoteBuf(),
+                                   remoteBuf,
                                    hf3fs::storage::ChunkVer(0) /*updateVer*/,
                                    UpdateType::WRITE,
                                    writeIO->checksum};
 
-  if (writeIO->length <= requestCtx.clientConfig.max_inline_write_bytes()) {
+  if (sendInline) {
     payload.inlinebuf.data.assign(writeIO->data, writeIO->data + writeIO->length);
     BITFLAGS_SET(featureFlags, hf3fs::storage::FeatureFlags::SEND_DATA_INLINE);
   }
 
-  hf3fs::storage::WriteReq request{payload, tag, requestCtx.retryCount, userInfo, featureFlags, requestCtx.debugFlags};
+  hf3fs::storage::WriteReq
+      request{payload, tag, requestCtx.retryCount, userInfo, featureFlags, requestCtx.debugFlags, std::move(leases)};
 
   auto response =
       co_await callMessengerMethod<WriteReq, WriteRsp, &StorageMessenger::write>(getStorageMessengerForUpdates(),
@@ -2035,7 +2099,7 @@ CoTryTask<void> StorageClientImpl::queryLastChunk(std::span<QueryLastChunkOp> op
   std::vector<QueryLastChunkOp *> failedIOVec;
   if (failedOps == nullptr) failedOps = &failedIOVec;
 
-  auto sendOps = [ this, &requestCtx, userInfo, options ](const std::vector<QueryLastChunkOp *> &ops) -> auto{
+  auto sendOps = [this, &requestCtx, userInfo, options](const std::vector<QueryLastChunkOp *> &ops) -> auto {
     return queryLastChunkWithoutRetry(requestCtx, ops, userInfo, options);
   };
 
@@ -2138,7 +2202,7 @@ CoTryTask<void> StorageClientImpl::removeChunks(std::span<RemoveChunksOp> ops,
   std::vector<RemoveChunksOp *> failedIOVec;
   if (failedOps == nullptr) failedOps = &failedIOVec;
 
-  auto sendOps = [ this, &requestCtx, userInfo, options ](const std::vector<RemoveChunksOp *> &ops) -> auto{
+  auto sendOps = [this, &requestCtx, userInfo, options](const std::vector<RemoveChunksOp *> &ops) -> auto {
     return removeChunksWithoutRetry(requestCtx, ops, userInfo, options);
   };
 
@@ -2269,7 +2333,7 @@ CoTryTask<void> StorageClientImpl::truncateChunks(std::span<TruncateChunkOp> ops
   std::vector<TruncateChunkOp *> failedIOVec;
   if (failedOps == nullptr) failedOps = &failedIOVec;
 
-  auto sendOps = [ this, &requestCtx, userInfo, options ](const std::vector<TruncateChunkOp *> &ops) -> auto{
+  auto sendOps = [this, &requestCtx, userInfo, options](const std::vector<TruncateChunkOp *> &ops) -> auto {
     return truncateChunksWithoutRetry(requestCtx, ops, userInfo, options);
   };
 

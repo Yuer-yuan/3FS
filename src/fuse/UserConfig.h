@@ -20,7 +20,7 @@ class UserConfig {
   const FuseConfig &getConfig(const meta::UserInfo &ui);
 
  public:
-  const std::vector<std::string> systemKeys{"storage.net_client.rdma_control.max_concurrent_transmission",
+  const std::vector<std::string> systemKeys{"storage.net_client.bulk_control.max_concurrent_transmission",
                                             "periodic_sync.enable",
                                             "periodic_sync.interval",
                                             "periodic_sync.flush_write_buf",

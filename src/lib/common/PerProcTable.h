@@ -1,6 +1,6 @@
 #pragma once
 
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 #include <memory>
 #include <ranges>
 #include <shared_mutex>
@@ -159,7 +159,7 @@ class PerProcTable {
   int pid_;
   int ppid_;
   mutable std::shared_mutex mtx_;
-  using AtomicItemPtr = folly::atomic_shared_ptr<Item>;
+  using AtomicItemPtr = hf3fs::AtomicSharedPtr<Item>;
   std::vector<AtomicItemPtr> table_;
   int nextAvail_ = 0;
   std::vector<int> free_;

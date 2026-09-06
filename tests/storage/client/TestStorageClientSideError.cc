@@ -22,9 +22,11 @@ class TestStorageClientSideError : public UnitTestFabric, public ::testing::Test
 
   void SetUp() override {
     // init ib device
+#if HF3FS_ENABLE_RDMA
     net::IBDevice::Config ibConfig;
     auto ibResult = net::IBManager::start(ibConfig);
     ASSERT_OK(ibResult);
+#endif
     ASSERT_TRUE(setUpStorageSystem());
     clientConfig_.retry().set_max_retry_time(2_s);
   }

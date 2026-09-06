@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/utils/AtomicSharedPtr.h"
 #include <algorithm>
 #include <folly/Random.h>
 #include <folly/experimental/coro/Invoke.h>
@@ -95,7 +96,7 @@ class Server {
   std::vector<std::unique_ptr<ServiceGroup>> groups_;
   flat::AppInfo appInfo_;
   std::atomic_flag stopped_;
-  folly::atomic_shared_ptr<const CoreRequestOptions> options_{std::make_shared<CoreRequestOptions>()};
+  hf3fs::AtomicSharedPtr<const CoreRequestOptions> options_{std::make_shared<CoreRequestOptions>()};
 };
 
 }  // namespace hf3fs::net

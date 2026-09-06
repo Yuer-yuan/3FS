@@ -19,7 +19,7 @@
 #include <folly/Memory.h>
 #include <folly/SpinLock.h>
 #include <folly/ThreadLocal.h>
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 #include <folly/stats/TDigest.h>
 #include <memory>
 
@@ -62,7 +62,7 @@ class DigestBuilder {
   };
 
   struct TlsBuffer {
-    folly::atomic_shared_ptr<State> state{std::make_shared<State>()};
+    hf3fs::AtomicSharedPtr<State> state{std::make_shared<State>()};
 
     TlsBuffer() noexcept = default;
 

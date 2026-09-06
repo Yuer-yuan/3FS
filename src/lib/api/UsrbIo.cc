@@ -1,3 +1,4 @@
+#include "common/utils/AtomicSharedPtr.h"
 #include <cstdint>
 #include <fcntl.h>
 #include <fmt/format.h>
@@ -552,7 +553,7 @@ static int noFiles() {
   return lim.rlim_max;
 }
 
-using Hf3fsRegisteredFds = std::vector<folly::atomic_shared_ptr<Hf3fsRegisteredFd>>;
+using Hf3fsRegisteredFds = std::vector<hf3fs::AtomicSharedPtr<Hf3fsRegisteredFd>>;
 static Hf3fsRegisteredFds regfds(noFiles());
 
 int hf3fs_reg_fd(int fd, uint64_t flags) {

@@ -22,6 +22,22 @@ using status_code_t = uint16_t;
 #undef STATUS
 #undef RAW_STATUS
 
+// Transport-neutral source aliases. Their values and diagnostic strings stay
+// identical to the legacy symbols so the RPC wire ABI remains unchanged.
+namespace RPCCode {
+inline constexpr auto kDataPlaneInitFailed = kIBInitFailed;
+inline constexpr auto kDataPlaneInterfaceNotFound = kIBDeviceNotFound;
+inline constexpr auto kBulkPostFailed = kRDMAPostFailed;
+inline constexpr auto kBulkTransferError = kRDMAError;
+inline constexpr auto kNoSharedBuffer = kRDMANoBuf;
+inline constexpr auto kDataPlaneNotInitialized = kIBDeviceNotInitialized;
+inline constexpr auto kDataPlaneOpenFailed = kIBOpenPortFailed;
+}  // namespace RPCCode
+
+namespace StorageClientCode {
+inline constexpr auto kNoDataPlaneInterface = kNoRDMAInterface;
+}  // namespace StorageClientCode
+
 enum class StatusCodeType {
   Invalid = -1,
   Common = 0,

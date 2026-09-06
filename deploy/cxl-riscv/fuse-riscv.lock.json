@@ -1,0 +1,30 @@
+{
+  "schema": "hf3fs.fuse-riscv-lock.v1",
+  "version": "3.14.0-5build1",
+  "packages": [
+    {
+      "architecture": "riscv64",
+      "package": "libfuse3-dev",
+      "sha256": "f5fa84e37a8a289f66d7bee92868476c1195690c56728db59df964154642c02e",
+      "size": 281692,
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/f/fuse3/libfuse3-dev_3.14.0-5build1_riscv64.deb",
+      "version": "3.14.0-5build1"
+    },
+    {
+      "architecture": "riscv64",
+      "package": "libfuse3-3",
+      "sha256": "44b030ed1a9143cb2eab34f8186eb9223dc555737a58768c298d62777ac46d4e",
+      "size": 86072,
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/f/fuse3/libfuse3-3_3.14.0-5build1_riscv64.deb",
+      "version": "3.14.0-5build1"
+    },
+    {
+      "architecture": "riscv64",
+      "package": "fuse3",
+      "sha256": "4e0e1882690834eac1768c1dc248f42b72d1028b0d2e96f11740a0be9b62ddc8",
+      "size": 25590,
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/main/f/fuse3/fuse3_3.14.0-5build1_riscv64.deb",
+      "version": "3.14.0-5build1"
+    }
+  ]
+}

@@ -13,6 +13,10 @@ file_path = '${MGMTD_LOG}'
 [server.base.groups.listener]
 listen_port = ${MGMTD_PORT}
 
+[server.base.groups.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536
+
 [[server.base.groups]]
 [server.base.groups.listener]
 listen_port = 0

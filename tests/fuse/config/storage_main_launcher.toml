@@ -1,7 +1,18 @@
 cluster_id = '${FS_CLUSTER}'
 
-[ib_devices]
-default_pkey_index = ${PKEY_INDEX}
+[cxl]
+enabled = true
+endpoint = 4
+endpoint_generation = 1
+manifest_path = '${CXL_MANIFEST}'
+mode = 'Attach'
+region_length = '256MB'
+region_path = '${CXL_REGION}'
+region_type = 'File'
 
 [mgmtd_client]
-mgmtd_server_addresses = [ 'RDMA://${ADDRESS}:${MGMTD_PORT}' ]
+mgmtd_server_addresses = [ 'CXL://${ADDRESS}:${MGMTD_PORT}' ]
+
+[client.io_worker.cxlsocket]
+queue_depth = 8
+cell_bytes = 65536

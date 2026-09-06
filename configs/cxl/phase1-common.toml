@@ -1,0 +1,25 @@
+# Phase-1 CXL transport template. The runner copies this table into each
+# process launcher config and substitutes the manifest, endpoint and region.
+# cxl-fabricd alone changes mode to InitializeAuthority and sets the two
+# authority receipt fields.
+
+[cxl]
+attach_timeout = '5s'
+authority_owner_lock = ''
+authority_receipt = ''
+authority_stale_timeout = '5s'
+capability_bits = 0
+enabled = true
+endpoint = 0
+endpoint_generation = 1
+heartbeat_interval = '10ms'
+manifest_path = '/etc/3fs/cxl-runtime-manifest.json'
+mode = 'Attach'
+poll_sleep = '10us'
+poll_spin = '20us'
+poll_yields = 8
+region_length = '256MB'
+region_offset = '0B'
+region_path = '/dev/dax0.0'
+region_type = 'Dax'
+shutdown_timeout = '5s'

@@ -54,17 +54,24 @@ endmacro()
 
 macro(target_add_test NAME)
     file(GLOB_RECURSE FILES CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.cc")
-    add_executable(${NAME} ${FILES})
-    target_link_libraries(${NAME} gmock test_main ${ARGN} "")
-    target_include_directories(${NAME}
-        PUBLIC
-            $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>
-            ${PROJECT_SOURCE_DIR}
-            ${PROJECT_BINARY_DIR}/src
-            ${PROJECT_BINARY_DIR}
-    )
-    add_test(NAME ${NAME} COMMAND ${NAME})
-    set_target_properties(${NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    if(NOT HF3FS_ENABLE_RDMA)
+        list(FILTER FILES EXCLUDE REGEX "(^|/)net/ib/")
+    endif()
+    if(FILES)
+        add_executable(${NAME} ${FILES})
+        target_link_libraries(${NAME} gmock test_main ${ARGN} "")
+        target_include_directories(${NAME}
+            PUBLIC
+                $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>
+                ${PROJECT_SOURCE_DIR}
+                ${PROJECT_BINARY_DIR}/src
+                ${PROJECT_BINARY_DIR}
+        )
+        add_test(NAME ${NAME} COMMAND ${NAME})
+        set_target_properties(${NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    else()
+        message(STATUS "Skipping empty test target ${NAME}")
+    endif()
 endmacro()
 
 macro(target_add_fbs NAME PATH)

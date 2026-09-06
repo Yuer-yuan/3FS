@@ -1,0 +1,31 @@
+diff --git a/cpp/cmake_modules/ThirdpartyToolchain.cmake b/cpp/cmake_modules/ThirdpartyToolchain.cmake
+index 94f926039..be7aabeca 100644
+--- a/cpp/cmake_modules/ThirdpartyToolchain.cmake
++++ b/cpp/cmake_modules/ThirdpartyToolchain.cmake
+@@ -884,6 +884,16 @@ endif()
+ set(EP_COMMON_TOOLCHAIN "-DCMAKE_C_COMPILER=${EP_C_COMPILER}"
+                         "-DCMAKE_CXX_COMPILER=${EP_CXX_COMPILER}")
+ 
++if(CMAKE_CROSSCOMPILING)
++  list(APPEND EP_COMMON_TOOLCHAIN
++       "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
++       "-DCMAKE_SYSROOT=${CMAKE_SYSROOT}"
++       "-DCMAKE_TRY_COMPILE_TARGET_TYPE=EXECUTABLE")
++  foreach(variable IN LISTS CMAKE_TRY_COMPILE_PLATFORM_VARIABLES)
++    list(APPEND EP_COMMON_TOOLCHAIN "-D${variable}=${${variable}}")
++  endforeach()
++endif()
++
+ if(CMAKE_AR)
+   list(APPEND EP_COMMON_TOOLCHAIN -DCMAKE_AR=${CMAKE_AR})
+ endif()
+@@ -1896,6 +1906,9 @@ macro(build_jemalloc)
+   set(JEMALLOC_STATIC_LIB
+       "${JEMALLOC_LIB_DIR}/libjemalloc_pic${CMAKE_STATIC_LIBRARY_SUFFIX}")
+   set(JEMALLOC_CONFIGURE_COMMAND ./configure "AR=${CMAKE_AR}" "CC=${CMAKE_C_COMPILER}")
++  if(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_PROCESSOR STREQUAL "riscv64")
++    list(APPEND JEMALLOC_CONFIGURE_COMMAND "--host=riscv64-linux-gnu")
++  endif()
+   if(CMAKE_OSX_SYSROOT)
+     list(APPEND JEMALLOC_CONFIGURE_COMMAND "SDKROOT=${CMAKE_OSX_SYSROOT}")
+   endif()

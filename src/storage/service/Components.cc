@@ -18,7 +18,7 @@ monitor::ValueRecorder targetStateRecorder{"storage.target_state", std::nullopt,
 
 Components::Components(const Config &config)
     : config(config),
-      rdmabufPool(config.buffer_pool()),
+      bufferPool(config.buffer_pool()),
       storageTargets(config.targets(), targetMap),
       aioReadWorker(config.aio_read_worker()),
       messenger(config.forward_client()),
@@ -39,7 +39,7 @@ Components::Components(const Config &config)
 Result<Void> Components::start(const flat::AppInfo &appInfo, net::ThreadPoolGroup &tpg) {
   this->appInfo = appInfo;
 
-  RETURN_ON_ERROR_LOG_WRAPPED(INFO, "Start rdmabufPool", rdmabufPool.init(tpg.procThreadPool()));
+  RETURN_ON_ERROR_LOG_WRAPPED(INFO, "Start bufferPool", bufferPool.init(tpg.procThreadPool()));
 
   RETURN_ON_ERROR_LOG_WRAPPED(INFO, "Start readPool", readPool.start());
   RETURN_ON_ERROR_LOG_WRAPPED(INFO, "Start updatePool", updatePool.start());
@@ -51,7 +51,7 @@ Result<Void> Components::start(const flat::AppInfo &appInfo, net::ThreadPoolGrou
   RETURN_ON_ERROR_LOG_WRAPPED(INFO, "Start storageTargets", storageTargets.load(tpg.procThreadPool()));
   RETURN_ON_ERROR_LOG_WRAPPED(INFO,
                               "Start aioReadWorker",
-                              aioReadWorker.start(storageTargets.fds(), rdmabufPool.iovecs()));
+                              aioReadWorker.start(storageTargets.fds(), bufferPool.iovecs()));
   RETURN_ON_ERROR_LOG_WRAPPED(INFO, "Start dumpWorker", dumpWorker.start(appInfo.nodeId));
   RETURN_ON_ERROR_LOG_WRAPPED(INFO, "Start allocateWorker", allocateWorker.start());
   RETURN_ON_ERROR_LOG_WRAPPED(INFO, "Start punchHoleWorker", punchHoleWorker.start());
@@ -196,7 +196,7 @@ Result<Void> Components::stopAndJoin(CPUExecutorGroup &executor) {
   XLOGF(WARNING, "released {} targets, synced {} targets", released.load(), synced.load());
 
   LOG_COMMAND(INFO, "Clear storageTargets", storageTargets.globalFileStore().clear(executor));
-  LOG_COMMAND(INFO, "Clear rdmabufPool", rdmabufPool.clear(executor));
+  LOG_COMMAND(INFO, "Clear bufferPool", bufferPool.clear(executor));
   if (config.speed_up_quit()) {
     for (auto &engine : storageTargets.engines()) {
       engine->speed_up_quit();

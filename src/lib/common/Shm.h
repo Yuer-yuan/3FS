@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/utils/AtomicSharedPtr.h"
 #include <forward_list>
 #include <shared_mutex>
 
@@ -70,7 +71,7 @@ struct ShmBuf {
   //  int fd_;
 
   // for client agent
-  std::vector<folly::atomic_shared_ptr<storage::client::IOBuffer>> memhs_;
+  std::vector<hf3fs::AtomicSharedPtr<storage::client::IOBuffer>> memhs_;
   folly::coro::Baton memhBaton_;
   std::atomic<bool> regging_;
 };

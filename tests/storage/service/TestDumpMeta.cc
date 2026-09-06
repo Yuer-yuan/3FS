@@ -35,9 +35,11 @@ class TestDumpMeta : public UnitTestFabric, public ::testing::Test {
 
   void SetUp() override {
     // init ib device
+#if HF3FS_ENABLE_RDMA
     net::IBDevice::Config ibConfig;
     auto ibResult = net::IBManager::start(ibConfig);
     ASSERT_OK(ibResult);
+#endif
     ASSERT_TRUE(setUpStorageSystem());
   }
 
@@ -53,6 +55,7 @@ TEST_F(TestDumpMeta, Normal) {
   folly::test::TemporaryDirectory tmpPath;
   serverConfigs_[0].dump_worker().set_dump_root_path(tmpPath.path());
   serverConfigs_[0].dump_worker().set_dump_interval(100_ms);
+  storageServers_[0]->updateConfig(serverConfigs_[0]);
 
   std::this_thread::sleep_for(2_s);
   stopAndRemoveStorageServer(0);

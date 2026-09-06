@@ -1,3 +1,4 @@
+#include "common/utils/AtomicSharedPtr.h"
 #include "FuseOps.h"
 
 #include <algorithm>
@@ -2198,8 +2199,8 @@ void hf3fs_readdirplus(fuse_req_t req, fuse_ino_t fino, size_t size, off_t off, 
   auto dname = checkVirtDir(ino, &pino);
   if (dname) {
     if (*dname == virtDir) {
-      static folly::atomic_shared_ptr<std::vector<DirEntry>> rootEntries;
-      static folly::atomic_shared_ptr<std::vector<std::optional<Inode>>> rootChildren;
+      static hf3fs::AtomicSharedPtr<std::vector<DirEntry>> rootEntries;
+      static hf3fs::AtomicSharedPtr<std::vector<std::optional<Inode>>> rootChildren;
 
       if (rootChildren.load()) {
         pe = rootEntries.load();
@@ -2577,40 +2578,42 @@ void hf3fs_removexattr(fuse_req_t req, fuse_ino_t fino, const char *cname) {
 }
 }  // namespace
 
-const fuse_lowlevel_ops hf3fs_oper = {
-    .init = hf3fs_init,
-    .destroy = hf3fs_destroy,
-    .lookup = hf3fs_lookup,
-    .forget = hf3fs_forget,
-    .getattr = hf3fs_getattr,
-    .setattr = hf3fs_setattr,
-    .readlink = hf3fs_readlink,
-    .mknod = hf3fs_mknod,
-    .mkdir = hf3fs_mkdir,
-    .unlink = hf3fs_unlink,
-    .rmdir = hf3fs_rmdir,
-    .symlink = hf3fs_symlink,
-    .rename = hf3fs_rename,
-    .link = hf3fs_link,
-    .open = hf3fs_open,
-    .read = hf3fs_read,
-    .write = hf3fs_write,
-    .flush = hf3fs_flush,
-    .release = hf3fs_release,
-    .fsync = hf3fs_fsync,
-    .opendir = hf3fs_opendir,
-    //    .readdir = hf3fs_readdir,
-    .releasedir = hf3fs_releasedir,
-    //.fsyncdir = hf3fs_fsyncdir,
-    .statfs = hf3fs_statfs,
-    .setxattr = hf3fs_setxattr,
-    .getxattr = hf3fs_getxattr,
-    .listxattr = hf3fs_listxattr,
-    .removexattr = hf3fs_removexattr,
-    .create = hf3fs_create,
-    .ioctl = hf3fs_ioctl,
-    .readdirplus = hf3fs_readdirplus,
-};
+const fuse_lowlevel_ops hf3fs_oper = [] {
+  // Value-initialize the complete libfuse ABI so newer optional callbacks stay
+  // null without triggering -Wmissing-field-initializers.
+  fuse_lowlevel_ops ops{};
+  ops.init = hf3fs_init;
+  ops.destroy = hf3fs_destroy;
+  ops.lookup = hf3fs_lookup;
+  ops.forget = hf3fs_forget;
+  ops.getattr = hf3fs_getattr;
+  ops.setattr = hf3fs_setattr;
+  ops.readlink = hf3fs_readlink;
+  ops.mknod = hf3fs_mknod;
+  ops.mkdir = hf3fs_mkdir;
+  ops.unlink = hf3fs_unlink;
+  ops.rmdir = hf3fs_rmdir;
+  ops.symlink = hf3fs_symlink;
+  ops.rename = hf3fs_rename;
+  ops.link = hf3fs_link;
+  ops.open = hf3fs_open;
+  ops.read = hf3fs_read;
+  ops.write = hf3fs_write;
+  ops.flush = hf3fs_flush;
+  ops.release = hf3fs_release;
+  ops.fsync = hf3fs_fsync;
+  ops.opendir = hf3fs_opendir;
+  ops.releasedir = hf3fs_releasedir;
+  ops.statfs = hf3fs_statfs;
+  ops.setxattr = hf3fs_setxattr;
+  ops.getxattr = hf3fs_getxattr;
+  ops.listxattr = hf3fs_listxattr;
+  ops.removexattr = hf3fs_removexattr;
+  ops.create = hf3fs_create;
+  ops.ioctl = hf3fs_ioctl;
+  ops.readdirplus = hf3fs_readdirplus;
+  return ops;
+}();
 
 const fuse_lowlevel_ops &getFuseOps() { return hf3fs_oper; }
 

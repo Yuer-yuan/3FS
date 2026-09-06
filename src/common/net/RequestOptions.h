@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <utility>
 
 #include "common/serde/Serde.h"
@@ -25,6 +26,11 @@ struct UserRequestOptions {
   SERDE_STRUCT_FIELD(compression, std::optional<CompressionOptions>{});
   SERDE_STRUCT_FIELD(logLongRunningThreshold, std::optional<Duration>{});
   SERDE_STRUCT_FIELD(reportMetrics, std::optional<bool>{});
+
+ public:
+  // Not serialized. It pins transport-owned resources through publication,
+  // response, timeout reconciliation, or terminal failure.
+  std::shared_ptr<void> requestLifetime;
 };
 
 struct CoreRequestOptions {
@@ -44,14 +50,20 @@ struct CoreRequestOptions {
     if (o.reportMetrics) {
       reportMetrics = o.reportMetrics.value();
     }
+    if (o.requestLifetime) {
+      requestLifetime = o.requestLifetime;
+    }
   }
 
   SERDE_STRUCT_FIELD(timeout, kClientRequestDefaultTimeout);
   SERDE_STRUCT_FIELD(sendRetryTimes, kDefaultMaxRetryTimes);
   SERDE_STRUCT_FIELD(compression, CompressionOptions{});
-  SERDE_STRUCT_FIELD(enableRDMAControl, false);
+  SERDE_STRUCT_FIELD(enableBulkControl, false);
   SERDE_STRUCT_FIELD(logLongRunningThreshold, kClientRequestLogLongRunningThreshold);
   SERDE_STRUCT_FIELD(reportMetrics, false);
+
+ public:
+  std::shared_ptr<void> requestLifetime;
 };
 
 }  // namespace hf3fs::net

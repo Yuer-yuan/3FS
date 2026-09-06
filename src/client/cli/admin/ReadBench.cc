@@ -103,25 +103,24 @@ CoTryTask<Dispatcher::OutputTable> handle(IEnv &ienv,
   std::atomic<size_t> readBytes{};
   total.reserve(coroutines);
   co_await env.mgmtdClientGetter()->refreshRoutingInfo(true);
-  auto rdmabufPool = net::RDMABufPool::create(64_MB, 512);
   for (auto i = 0u; i < coroutines; ++i) {
     total.push_back(folly::coro::co_invoke([&]() -> CoTryTask<Void> {
       std::ofstream out("/dev/null");
       std::vector<storage::client::ReadIO> readIOs;
       std::vector<storage::client::WriteIO> writeIOs;
       std::vector<storage::client::IOBuffer> buffers;
-      net::RDMABuf current;
+      size_t currentOffset = 64_MB;
       storage::client::ReadOptions readOptions;
       storage::client::WriteOptions writeOptions;
       readOptions.targetSelection().set_mode(*mode);
-      readIOs.reserve(1024);
-      writeIOs.reserve(1024);
-      buffers.reserve(1024);
+      readIOs.reserve(iodepth);
+      writeIOs.reserve(iodepth);
+      buffers.reserve(iodepth);
       while (RelativeTime::now() <= deadline) {
         readIOs.clear();
         writeIOs.clear();
         buffers.clear();
-        current = {};
+        currentOffset = 64_MB;
         auto routingInfo = env.mgmtdClientGetter()->getRoutingInfo()->raw();
         if (UNLIKELY(routingInfo == nullptr)) {
           co_return makeError(StorageClientCode::kRoutingError, "routing info is null");
@@ -140,27 +139,22 @@ CoTryTask<Dispatcher::OutputTable> handle(IEnv &ienv,
               file.file().getChunkId(file.inode().id, offset).then([](auto chunk) { return storage::ChunkId(chunk); });
           CO_RETURN_AND_LOG_ON_ERROR(chunk);
           auto l = std::min(file.file().length - offset, blockSize);
-          if (current.size() < l) {
-            current = co_await rdmabufPool->allocate();
-            if (UNLIKELY(!current)) {
-              XLOGF(FATAL, "allocate buffer failed");
-            }
-            buffers.emplace_back(current);
+          if (currentOffset + l > 64_MB) {
+            auto allocated = storageClient->allocateIOBuffer(64_MB);
+            CO_RETURN_AND_LOG_ON_ERROR(allocated);
+            buffers.push_back(std::move(*allocated));
+            currentOffset = 0;
           }
+          auto *current = buffers.back().data() + currentOffset;
           if (isWrite) {
-            writeIOs.push_back(storageClient->createWriteIO(*chainResult,
-                                                            *chunk,
-                                                            offset % chunkSize,
-                                                            l,
-                                                            chunkSize,
-                                                            current.ptr(),
-                                                            &buffers.back()));
+            writeIOs.push_back(
+                storageClient
+                    ->createWriteIO(*chainResult, *chunk, offset % chunkSize, l, chunkSize, current, &buffers.back()));
           } else {
             readIOs.push_back(
-                storageClient
-                    ->createReadIO(*chainResult, *chunk, offset % chunkSize, l, current.ptr(), &buffers.back()));
+                storageClient->createReadIO(*chainResult, *chunk, offset % chunkSize, l, current, &buffers.back()));
           }
-          current.advance(l);
+          currentOffset += l;
         }
 
         if (isWrite) {

@@ -24,7 +24,7 @@ template <class Tuple, class T>
 using Append_t = typename Append<Tuple, T>::type;
 
 // REFL_ADD find this function by ADL.
-[[maybe_unused]] static std::tuple<> CollectField(::hf3fs::refl::Rank<0>);
+[[maybe_unused]] inline std::tuple<> CollectField(::hf3fs::refl::Rank<0>) { return {}; }
 
 #define REFL_NOW decltype(CollectField(::hf3fs::refl::Rank<>{}))
 #define REFL_ADD(info)                                                   \
@@ -37,9 +37,9 @@ struct Helper {
   template <class T>
   static decltype(CollectField(refl::Rank<>{})) getFieldInfo();
   template <class T>
-  requires requires {
-    { T::CollectField(refl::Rank<>{}) } -> is_specialization<std::tuple>;
-  }
+    requires requires {
+      { T::CollectField(refl::Rank<>{}) } -> is_specialization<std::tuple>;
+    }
   static decltype(T::CollectField(refl::Rank<>{})) getFieldInfo();
 
   template <class T>
@@ -52,7 +52,9 @@ struct Helper {
   using FieldInfo = std::tuple_element_t<I, FieldInfoList<T>>;
 
   template <typename T, bool Backwards = false, size_t I = 0>
-  static constexpr auto iterate(auto &&f, auto &&...typeChanged) requires(Size<T> > 0 && I < Size<T>) {
+  static constexpr auto iterate(auto &&f, auto &&...typeChanged)
+    requires(Size<T> > 0 && I < Size<T>)
+  {
     constexpr auto idx = Backwards ? Size<T> - 1 - I : I;
     auto t = FieldInfo<T, idx>{};
     if constexpr (I > 0 && sizeof...(typeChanged) > 0) {
@@ -87,12 +89,16 @@ struct Helper {
   }
 
   template <typename T>
-  static auto iterate(auto &&) requires(Size<T> == 0) {
+  static auto iterate(auto &&)
+    requires(Size<T> == 0)
+  {
     return;
   }
 
   template <typename T, bool Backwards = false, size_t I = 0>
-  static auto visit(auto &&f) requires(Size<T> > 0 && I < Size<T>) {
+  static auto visit(auto &&f)
+    requires(Size<T> > 0 && I < Size<T>)
+  {
     constexpr auto idx = Backwards ? Size<T> - 1 - I : I;
     auto t = FieldInfo<T, idx>{};
     if constexpr (requires { f(t); }) {
@@ -103,7 +109,9 @@ struct Helper {
   }
 
   template <typename T>
-  static auto visit(auto &&) requires(Size<T> == 0) {
+  static auto visit(auto &&)
+    requires(Size<T> == 0)
+  {
     return;
   }
 

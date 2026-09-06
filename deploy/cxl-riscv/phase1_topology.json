@@ -1,0 +1,31 @@
+{
+  "schema": "hf3fs.cxl-phase1-topology.v1",
+  "roles": {
+    "fabric-authority": {"endpoint": 1, "guest": 1, "address": "CXL://10.73.0.2:7999", "serves_data": false},
+    "echo-server": {"endpoint": 2, "guest": 1, "address": "CXL://10.73.0.2:8000", "serves_data": true},
+    "mgmtd": {"endpoint": 2, "guest": 1, "address": "CXL://10.73.0.2:8001", "serves_data": true},
+    "meta": {"endpoint": 3, "guest": 2, "address": "CXL://10.73.0.3:8002", "serves_data": true},
+    "storage-0": {"endpoint": 4, "guest": 16, "address": "CXL://10.73.0.16:8010", "serves_data": true},
+    "storage-1": {"endpoint": 5, "guest": 17, "address": "CXL://10.73.0.17:8010", "serves_data": true},
+    "storage-2": {"endpoint": 6, "guest": 18, "address": "CXL://10.73.0.18:8010", "serves_data": true},
+    "admin": {"endpoint": 7, "guest": 64, "address": "CXL://10.73.0.64:18007", "serves_data": false},
+    "monitor": {"endpoint": 8, "guest": 1, "address": "CXL://10.73.0.2:18008", "serves_data": false},
+    "fdb": {"endpoint": null, "guest": 4, "address": null, "serves_data": false},
+    "client-0": {"endpoint": 16, "guest": 64, "address": "CXL://10.73.0.64:18000", "serves_data": false},
+    "client-1": {"endpoint": 17, "guest": 65, "address": "CXL://10.73.0.65:18000", "serves_data": false},
+    "client-2": {"endpoint": 18, "guest": 66, "address": "CXL://10.73.0.66:18000", "serves_data": false},
+    "client-3": {"endpoint": 19, "guest": 67, "address": "CXL://10.73.0.67:18000", "serves_data": false},
+    "client-4": {"endpoint": 20, "guest": 68, "address": "CXL://10.73.0.68:18000", "serves_data": false},
+    "client-5": {"endpoint": 21, "guest": 69, "address": "CXL://10.73.0.69:18000", "serves_data": false},
+    "client-6": {"endpoint": 22, "guest": 70, "address": "CXL://10.73.0.70:18000", "serves_data": false},
+    "client-7": {"endpoint": 23, "guest": 71, "address": "CXL://10.73.0.71:18000", "serves_data": false},
+    "client-8": {"endpoint": 24, "guest": 72, "address": "CXL://10.73.0.72:18000", "serves_data": false},
+    "client-9": {"endpoint": 25, "guest": 73, "address": "CXL://10.73.0.73:18000", "serves_data": false}
+  },
+  "scenarios": {
+    "echo": {"base_roles": ["fabric-authority", "echo-server"], "storage_roles": false, "client_roles": true},
+    "storage": {"base_roles": ["fabric-authority", "mgmtd", "meta", "admin", "fdb"], "storage_roles": true, "client_roles": true},
+    "chain": {"base_roles": ["fabric-authority", "mgmtd", "meta", "admin", "fdb"], "storage_roles": true, "client_roles": true},
+    "io500": {"base_roles": ["fabric-authority", "mgmtd", "meta", "admin", "fdb"], "storage_roles": true, "client_roles": true}
+  }
+}

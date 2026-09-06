@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "common/monitor/Recorder.h"
+#include "common/net/PublicationLedger.h"
 #include "common/net/Transport.h"
 #include "common/net/Waiter.h"
 
@@ -31,6 +32,7 @@ WriteList WriteList::extractForRetry() {
     auto next = head_->next.load(std::memory_order_acquire);
     if (head_->isReq() && head_->retryTimes++ < head_->maxRetryTimes) {
       Waiter::instance().setTransport(head_->uuid, nullptr);
+      head_->publication.reset();
       if (newTail == nullptr) {
         newHead = newTail = head_;
       } else {
@@ -51,6 +53,20 @@ WriteList WriteList::extractForRetry() {
     newTail->next.store(nullptr, std::memory_order_release);
   }
   return WriteList{newHead, newTail};
+}
+
+Result<Void> WriteList::assignPublicationRanges(PublicationLedger &ledger) {
+  for (auto *item = head_; item != nullptr; item = item->next.load(std::memory_order_acquire)) {
+    if (item->publication) {
+      return makeError(StatusCode::kInvalidArg, "write item already has a CXL publication range");
+    }
+    auto range = ledger.reserve(item->buf->length());
+    if (!range) {
+      return makeError(std::move(range.error()));
+    }
+    item->publication = *range;
+  }
+  return Void{};
 }
 
 void WriteList::setTransport(std::shared_ptr<Transport> tr) {
@@ -95,7 +111,7 @@ uint32_t WriteListWithProgress::toIOVec(struct iovec *iovec, uint32_t len, size_
   return n;
 }
 
-void WriteListWithProgress::advance(size_t written) {
+Result<Void> WriteListWithProgress::advance(size_t written, PublicationLedger *ledger) {
   auto guard = folly::makeGuard([startTime = std::chrono::steady_clock::now()] {
     auto elapsed = std::chrono::steady_clock::now() - startTime;
     advanceCPUTime.addSample(std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count());
@@ -108,12 +124,38 @@ void WriteListWithProgress::advance(size_t written) {
       written -= currentSize;
       WriteItemPtr old{head_};
       head_ = head_->next.load(std::memory_order_acquire);
+      if (ledger != nullptr && old->isReq()) {
+        auto retained = ledger->retain(std::move(old));
+        if (!retained) {
+          return makeError(std::move(retained.error()));
+        }
+      }
     } else {
       firstOffset_ = written;
-      return;
+      return Void{};
     }
   }
   firstOffset_ = 0;
+  if (head_ == nullptr) {
+    tail_ = nullptr;
+  }
+  return Void{};
+}
+
+Result<Void> WriteListWithProgress::retainRequests(PublicationLedger &ledger) {
+  while (head_ != nullptr) {
+    WriteItemPtr item{head_};
+    head_ = head_->next.load(std::memory_order_acquire);
+    if (item->isReq()) {
+      auto retained = ledger.retain(std::move(item));
+      if (!retained) {
+        return makeError(std::move(retained.error()));
+      }
+    }
+  }
+  tail_ = nullptr;
+  firstOffset_ = 0;
+  return Void{};
 }
 
 constexpr uintptr_t kUnconnectedState = ~0UL;

@@ -2,7 +2,7 @@
 
 #include <folly/Overload.h>
 #include <folly/Synchronized.h>
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 #include <folly/experimental/coro/BlockingWait.h>
 #include <folly/experimental/coro/BoundedQueue.h>
 #include <folly/experimental/coro/FutureUtil.h>
@@ -747,13 +747,13 @@ struct MgmtdClient::Impl {
   std::unique_ptr<MgmtdStubFactory> mgmtdStubFactory_;
   const Config &config_;
 
-  folly::atomic_shared_ptr<RoutingInfo> routingInfo_;
+  hf3fs::AtomicSharedPtr<RoutingInfo> routingInfo_;
   folly::Synchronized<std::map<String, RoutingInfoListener, std::less<>>> routingInfoListeners_;
-  folly::atomic_shared_ptr<ConfigListener> serverConfigListener_;
-  folly::atomic_shared_ptr<flat::AppInfo> appInfo_;
-  folly::atomic_shared_ptr<HeartbeatPayload> heartbeatPayload_;
-  folly::atomic_shared_ptr<ClientSessionPayload> clientSessionPayload_;
-  folly::atomic_shared_ptr<ConfigListener> clientConfigListener_;
+  hf3fs::AtomicSharedPtr<ConfigListener> serverConfigListener_;
+  hf3fs::AtomicSharedPtr<flat::AppInfo> appInfo_;
+  hf3fs::AtomicSharedPtr<HeartbeatPayload> heartbeatPayload_;
+  hf3fs::AtomicSharedPtr<ClientSessionPayload> clientSessionPayload_;
+  hf3fs::AtomicSharedPtr<ConfigListener> clientConfigListener_;
   std::unique_ptr<mgmtd::ExtendClientSessionReq> clientSessionReq_;
 
   robin_hood::unordered_map<net::Address, flat::NodeId> addrMap_;

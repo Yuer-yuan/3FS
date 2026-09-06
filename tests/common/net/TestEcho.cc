@@ -17,7 +17,9 @@
 #include "common/net/Client.h"
 #include "common/net/Listener.h"
 #include "common/net/Server.h"
+#if HF3FS_ENABLE_RDMA
 #include "common/net/ib/IBDevice.h"
+#endif
 #include "common/net/sync/Client.h"
 #include "common/serde/ClientContext.h"
 #include "common/utils/Address.h"
@@ -74,7 +76,7 @@ class TestEcho : public testing::TestWithParam<std::tuple<Address::Type, bool>> 
   Client::Config clientConfig_;
   bool initClientConfig = [this] {
     auto rwInEventThread = std::get<1>(GetParam());
-    clientConfig_.io_worker().set_read_write_rdma_in_event_thread(rwInEventThread);
+    clientConfig_.io_worker().set_read_write_data_in_event_thread(rwInEventThread);
     clientConfig_.io_worker().set_read_write_tcp_in_event_thread(rwInEventThread);
     return true;
   }();
@@ -85,7 +87,7 @@ class TestEcho : public testing::TestWithParam<std::tuple<Address::Type, bool>> 
     serverConfig_.groups(0).set_network_type(std::get<0>(GetParam()));
 
     auto rwInEventThread = std::get<1>(GetParam());
-    serverConfig_.groups(0).io_worker().set_read_write_rdma_in_event_thread(rwInEventThread);
+    serverConfig_.groups(0).io_worker().set_read_write_data_in_event_thread(rwInEventThread);
     serverConfig_.groups(0).io_worker().set_read_write_tcp_in_event_thread(rwInEventThread);
     return true;
   }();
@@ -356,10 +358,12 @@ TEST_P(TestEcho, MultiThreads) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(TestEcho,
-                         TestEcho,
-                         testing::Combine(testing::Values(Address::RDMA, Address::TCP, Address::UNIX),
-                                          testing::Values(true, false)));
+#if HF3FS_ENABLE_RDMA
+const auto kEchoNetworks = testing::Values(Address::RDMA, Address::TCP, Address::UNIX);
+#else
+const auto kEchoNetworks = testing::Values(Address::TCP, Address::UNIX);
+#endif
+INSTANTIATE_TEST_SUITE_P(TestEcho, TestEcho, testing::Combine(kEchoNetworks, testing::Values(true, false)));
 
 TEST(TestEchoSync, Normal) {
   std::array<Address::Type, 4> networks{Address::LOCAL, Address::TCP /*, Address::IPoIB */};

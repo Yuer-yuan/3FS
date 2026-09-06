@@ -1,1 +1,2 @@
 target_add_test(test_migration test-fabric-lib migration)
+add_dependencies(test_migration cxl_storage_test_helper)

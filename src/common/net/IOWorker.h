@@ -2,7 +2,7 @@
 
 #include <folly/Executor.h>
 #include <folly/Synchronized.h>
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include <folly/net/NetworkSocket.h>
 #include <memory>
@@ -13,7 +13,11 @@
 #include "common/net/Transport.h"
 #include "common/net/TransportPool.h"
 #include "common/net/WriteItem.h"
+#include "common/net/cxl/CxlSocket.h"
+#if HF3FS_ENABLE_RDMA
 #include "common/net/ib/IBSocket.h"
+#endif
+#include "common/utils/ConfigBase.h"
 #include "common/utils/ConcurrencyLimiter.h"
 #include "common/utils/Duration.h"
 
@@ -24,13 +28,16 @@ class IOWorker {
  public:
   class Config : public ConfigBase<Config> {
     CONFIG_HOT_UPDATED_ITEM(read_write_tcp_in_event_thread, false);
-    CONFIG_HOT_UPDATED_ITEM(read_write_rdma_in_event_thread, false);
+    CONFIG_HOT_UPDATED_ITEM(read_write_data_in_event_thread, false);
     CONFIG_HOT_UPDATED_ITEM(tcp_connect_timeout, 1_s);
-    CONFIG_HOT_UPDATED_ITEM(rdma_connect_timeout, 5_s);
+    CONFIG_HOT_UPDATED_ITEM(data_connect_timeout, 5_s);
     CONFIG_HOT_UPDATED_ITEM(wait_to_retry_send, 100_ms);
     CONFIG_ITEM(num_event_loop, 1u);
 
+#if HF3FS_ENABLE_RDMA
     CONFIG_OBJ(ibsocket, IBSocket::Config);
+#endif
+    CONFIG_OBJ(cxlsocket, cxl::CxlSocket::Config);
     CONFIG_OBJ(transport_pool, TransportPool::Config);
     CONFIG_OBJ(connect_concurrency_limiter, ConcurrencyLimiterConfig, [](auto &c) { c.set_max_concurrency(4); });
   };
@@ -46,6 +53,7 @@ class IOWorker {
         connExecutorShared_(std::make_shared<folly::Executor::KeepAlive<>>(&connExecutor_)),
         pool_(config_.transport_pool()),
         eventLoopPool_(config_.num_event_loop()),
+#if HF3FS_ENABLE_RDMA
         ibsocketConfigGuard_(config.ibsocket().addCallbackGuard([this] {
           auto newVal = config_.ibsocket().drop_connections();
           if (dropConnections_.exchange(newVal) != newVal) {
@@ -53,18 +61,25 @@ class IOWorker {
             dropConnections();
           }
         })),
+#endif
         connectConcurrencyLimiter_(config_.connect_concurrency_limiter()) {}
   ~IOWorker() { stopAndJoin(); }
 
   // start and stop.
   Result<Void> start(const std::string &name);
   void stopAndJoin();
+  const Config &config() const { return config_; }
 
   // add TCP socket with ownership into this IO worker. [thread-safe]
   Result<TransportPtr> addTcpSocket(folly::NetworkSocket sock, bool isDomainSocket = false);
 
+#if HF3FS_ENABLE_RDMA
   // add IBSocket with ownership into this IO worker. [thread-safe]
   Result<TransportPtr> addIBSocket(std::unique_ptr<IBSocket> sock);
+#endif
+
+  // add a connected CXL socket with ownership into this IO worker. [thread-safe]
+  Result<TransportPtr> addCxlSocket(std::unique_ptr<cxl::CxlSocket> sock, ServicePlane servicePlane);
 
   // send a batch of items asynchronously to specified address. [thread-safe]
   void sendAsync(Address addr, WriteList list);
@@ -89,7 +104,7 @@ class IOWorker {
   void remove(TransportPtr transport) { pool_.remove(std::move(transport)); }
 
   // connect asynchronous.
-  CoTryTask<void> startConnect(TransportPtr transport, Address addr);
+  CoTryTask<void> startConnect(TransportPtr transport);
 
   // wait and retry.
   CoTryTask<void> waitAndRetry(Address addr, WriteList list);
@@ -113,16 +128,18 @@ class IOWorker {
 
   // export a weak keep alive to Transport
   // note: folly's executor has a weakRef method, but the implementation seems have bug and will cause memory leak.
-  folly::atomic_shared_ptr<folly::Executor::KeepAlive<>> connExecutorShared_;
+  hf3fs::AtomicSharedPtr<folly::Executor::KeepAlive<>> connExecutorShared_;
 
   // keep transports alive.
   TransportPool pool_;
   // monitor I/O events for all transports.
   EventLoopPool eventLoopPool_;
 
+#if HF3FS_ENABLE_RDMA
   std::unique_ptr<ConfigCallbackGuard> ibsocketConfigGuard_;
+#endif
 
-  ConcurrencyLimiter<Address> connectConcurrencyLimiter_;
+  ConcurrencyLimiter<ServiceEndpoint> connectConcurrencyLimiter_;
 
   constexpr static size_t kStopFlag = 1;
   constexpr static size_t kCountInc = 2;

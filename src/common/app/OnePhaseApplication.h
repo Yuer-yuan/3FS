@@ -7,7 +7,10 @@
 #include "Utils.h"
 #include "common/logging/LogInit.h"
 #include "common/net/Server.h"
+#include "common/net/TransportRuntime.h"
+#if HF3FS_ENABLE_RDMA
 #include "common/net/ib/IBDevice.h"
+#endif
 #include "common/utils/LogCommands.h"
 #include "common/utils/SysResource.h"
 
@@ -20,17 +23,20 @@ DECLARE_bool(dump_default_cfg);
 
 namespace hf3fs {
 template <class T>
-requires requires {
-  typename T::Config;
-  std::string_view(T::kName);
-}
+  requires requires {
+    typename T::Config;
+    std::string_view(T::kName);
+  }
 class OnePhaseApplication : public ApplicationBase {
  public:
   class CommonConfig : public ConfigBase<CommonConfig> {
     CONFIG_ITEM(cluster_id, "");
     CONFIG_OBJ(log, logging::LogConfig);
     CONFIG_OBJ(monitor, monitor::Monitor::Config);
+    CONFIG_OBJ(cxl, net::TransportRuntime::Config);
+#if HF3FS_ENABLE_RDMA
     CONFIG_OBJ(ib_devices, net::IBDevice::Config);
+#endif
   };
 
   class Config : public ConfigBase<Config> {
@@ -80,8 +86,18 @@ class OnePhaseApplication : public ApplicationBase {
     }
 
     // init basic components
-    auto ibResult = net::IBManager::start(config_.common().ib_devices());
-    XLOGF_IF(FATAL, !ibResult, "Failed to start IBManager: {}", ibResult.error());
+    if (config_.common().cxl().enabled()) {
+      auto cxlResult = net::TransportRuntime::startConfigured(config_.common().cxl());
+      XLOGF_IF(FATAL, !cxlResult, "Failed to start CXL transport runtime: {}", cxlResult.error());
+    } else {
+#if HF3FS_ENABLE_RDMA
+      auto ibResult = net::IBManager::start(config_.common().ib_devices());
+      XLOGF_IF(FATAL, !ibResult, "Failed to start IBManager: {}", ibResult.error());
+#else
+      return makeError(RPCCode::kDataPlaneNotInitialized,
+                       "CXL transport must be enabled because RDMA support is disabled in this build");
+#endif
+    }
 
     auto logConfigStr = logging::generateLogConfig(config_.common().log(), String(T::kName));
     XLOGF(INFO, "LogConfig: {}", logConfigStr);

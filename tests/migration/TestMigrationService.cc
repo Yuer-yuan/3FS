@@ -33,9 +33,34 @@ class TestTestMigrationService : public UnitTestFabric, public ::testing::Test {
 
   void SetUp() override {
     // init ib device
+#if HF3FS_ENABLE_RDMA
     net::IBDevice::Config ibConfig;
     auto ibResult = net::IBManager::start(ibConfig);
     ASSERT_OK(ibResult);
+#endif
+#if HF3FS_ENABLE_CXL && !HF3FS_ENABLE_RDMA
+    prepareCxlServices_ = [&](CxlStorageTestFixture &fabric) {
+      server::MigrationServer::Config config;
+      config.mgmtd_client().set_mgmtd_server_addresses(mgmtdAddresses());
+      for (size_t i = 0; i < config.base().groups_length(); ++i) {
+        auto &group = config.base().groups(i);
+        group.set_network_type(i == 0 ? net::Address::CXL : net::Address::TCP);
+        group.set_service_plane(i == 0 ? net::ServicePlane::Data : net::ServicePlane::Control);
+        group.listener().set_listen_port(0);
+        group.listener().set_filter_list({"lo"});
+        group.listener().set_custom_tcp_nic_prefix("lo");
+        group.listener().set_reuse_port(false);
+        group.io_worker().cxlsocket().set_queue_depth(8);
+        group.io_worker().cxlsocket().set_cell_bytes(65536);
+      }
+      for (auto *client : {&config.background_client(), &config.storage_client().net_client(),
+                          &config.storage_client().net_client_for_updates()}) {
+        client->io_worker().cxlsocket().set_queue_depth(8);
+        client->io_worker().cxlsocket().set_cell_bytes(65536);
+      }
+      ASSERT_TRUE(fabric.prepareMigration(config.toString()).isCXL());
+    };
+#endif
     ASSERT_TRUE(setUpStorageSystem());
   }
 
@@ -62,7 +87,12 @@ TEST_F(TestTestMigrationService, StartAndStopServer) {
   auto writeRes = writeToChunk(chainId, chunkId, chunkData, 0, chunkData.size());
   ASSERT_OK(writeRes.lengthInfo);
 
-  const auto &mgmtdAddressList = mgmtdServer_.collectAddressList("Mgmtd");
+#if HF3FS_ENABLE_CXL && !HF3FS_ENABLE_RDMA
+  ASSERT_NE(cxlFixture_, nullptr);
+  ASSERT_NO_THROW(cxlFixture_->startMigration());
+  ASSERT_NO_THROW(cxlFixture_->stopMigration());
+#else
+  const auto &mgmtdAddressList = mgmtdAddresses();
 
   server::MigrationServer::Config config;
   config.mgmtd_client().set_mgmtd_server_addresses(mgmtdAddressList);
@@ -87,6 +117,7 @@ TEST_F(TestTestMigrationService, StartAndStopServer) {
 
   server.stopAndJoin();
   XLOGF(WARN, "migration server stopped: {}", nodeEndpoint);
+#endif
 }
 
 }  // namespace hf3fs::migration

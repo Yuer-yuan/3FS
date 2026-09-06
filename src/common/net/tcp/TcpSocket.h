@@ -17,6 +17,8 @@ class TcpSocket : public Socket {
 
   ~TcpSocket() override { close(); }
 
+  TransportKind kind() const noexcept final { return TransportKind::TCP; }
+
   // file descriptor monitored by epoll. [Socket]
   int fd() const final { return fd_; }
 

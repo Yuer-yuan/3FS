@@ -5,6 +5,7 @@
 #include "client/storage/StorageClient.h"
 #include "common/kv/mem/MemKVEngine.h"
 #include "common/net/Client.h"
+#include "common/net/TransportRuntime.h"
 #include "common/serde/Serde.h"
 #include "fbs/mgmtd/RoutingInfo.h"
 #include "fbs/storage/Service.h"
@@ -42,9 +43,11 @@ class TestStorageForward : public UnitTestFabric, public ::testing::Test {
         }) {}
 
   void SetUp() override {
+#if HF3FS_ENABLE_RDMA
     net::IBDevice::Config ibConfig;
     auto ibResult = net::IBManager::start(ibConfig);
     ASSERT_OK(ibResult);
+#endif
     ASSERT_TRUE(setUpStorageSystem());
   }
 
@@ -159,6 +162,69 @@ TEST_F(TestStorageForward, WriteAndRead) {
     ASSERT_EQ(memoryBlock[0], 0x02);
     ASSERT_EQ(memoryBlock[1], 0x03);
   }
+}
+
+class TestStorageTail : public TestStorageForward {
+ protected:
+  TestStorageTail() {
+    setupConfig_.set_num_replicas(1);
+    setupConfig_.set_num_storage_nodes(1);
+    setupConfig_.set_chunk_size(512_KB);
+  }
+};
+
+TEST_F(TestStorageTail, BulkWriteDoesNotAllocateForwardingCopy) {
+  auto fabric = net::TransportRuntime::cxlFabric();
+  if (!fabric) GTEST_SKIP() << "requires the real CXL storage fixture";
+  using namespace net::cxl;
+  // The fixture assigns its first storage process endpoint 3. Observe that
+  // owner's actual allocation generations across a real request, including
+  // allocations that were subsequently released.
+  auto position = fabric->participantPosition(EndpointId{3});
+  ASSERT_OK(position);
+  auto directory = fabric->layout().range(CxlRangeKind::AllocationDirectory, alignof(CxlAllocationRecord));
+  ASSERT_OK(directory);
+  const size_t slots = directory->size() / sizeof(CxlAllocationRecord) / position->count;
+  const size_t offset = position->index * slots * sizeof(CxlAllocationRecord);
+  auto generations = [&]() -> Result<std::vector<uint64_t>> {
+    std::vector<uint64_t> result;
+    for (size_t slot = 0; slot < slots; ++slot) {
+      auto bytes = directory->subspan(offset + slot * sizeof(CxlAllocationRecord), sizeof(CxlAllocationRecord));
+      if (std::atomic_ref<uint64_t>(*reinterpret_cast<uint64_t *>(bytes.data())).load(std::memory_order_acquire) == 0) {
+        result.push_back(0);  // never-published allocation slot
+        continue;
+      }
+      auto record = loadCxlOwnerRecord<CxlAllocationRecord>(bytes);
+      if (!record) return makeError(StatusCode::kDataCorruption);
+      result.push_back(loadLe64(&record->allocationGeneration));
+    }
+    return result;
+  };
+  auto before = generations();
+  ASSERT_OK(before);
+
+  std::vector<uint8_t> bytes(512_KB, 0x6d);
+  bytes.front() = 1;
+  bytes.back() = 2;
+  const auto expected = bytes;
+  auto registration = storageClient_->registerIOBuffer(bytes.data(), bytes.size());
+  ASSERT_OK(registration);
+  auto write = storageClient_->createWriteIO(firstChainId_, ChunkId(1, 1), 0, bytes.size(),
+                                            bytes.size(), bytes.data(), &*registration);
+  folly::coro::blockingWait(storageClient_->write(write, flat::UserInfo(), client::WriteOptions{}));
+  ASSERT_OK(write.result.lengthInfo);
+  ASSERT_EQ(*write.result.lengthInfo, bytes.size());
+  auto after = generations();
+  ASSERT_OK(after);
+  EXPECT_EQ(*before, *after) << "a chain tail must not allocate a CXL forwarding copy";
+
+  std::fill(bytes.begin(), bytes.end(), 0);
+  auto read = storageClient_->createReadIO(firstChainId_, ChunkId(1, 1), 0, bytes.size(),
+                                          bytes.data(), &*registration);
+  folly::coro::blockingWait(storageClient_->read(read, flat::UserInfo(), client::ReadOptions{}));
+  ASSERT_OK(read.result.lengthInfo);
+  ASSERT_EQ(*read.result.lengthInfo, bytes.size());
+  EXPECT_EQ(bytes, expected);
 }
 
 }  // namespace

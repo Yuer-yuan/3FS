@@ -1,6 +1,6 @@
 #pragma once
 
-#include <folly/concurrency/AtomicSharedPtr.h>
+#include "common/utils/AtomicSharedPtr.h"
 #include <folly/experimental/coro/Mutex.h>
 #include <folly/hash/Hash.h>
 #include <folly/logging/xlog.h>
@@ -83,7 +83,7 @@ class LockManager {
  private:
   uint32_t numBuckets_{};
   std::unique_ptr<Mutex[]> mutexes_;
-  std::vector<folly::atomic_shared_ptr<std::string>> owners_;
+  std::vector<hf3fs::AtomicSharedPtr<std::string>> owners_;
 };
 
 using UniqueLockManager = LockManager<std::mutex>;

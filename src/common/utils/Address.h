@@ -16,9 +16,9 @@ namespace hf3fs::net {
 constexpr const char *kUnixDomainSocketPrefix[] = {nullptr, "/tmp/domain_socket."};
 
 struct Address {
-  uint32_t ip{}; // Stored in Network Byte Order
+  uint32_t ip{};  // Stored in Network Byte Order
   uint16_t port{};
-  enum Type : uint16_t { TCP, RDMA, IPoIB, LOCAL, UNIX };
+  enum Type : uint16_t { TCP, RDMA, IPoIB, LOCAL, UNIX, CXL };
   Type type = Type::TCP;
   using is_serde_copyable = void;
 
@@ -30,6 +30,7 @@ struct Address {
 
   bool isTCP() const { return type == Type::TCP || type == Type::IPoIB || type == Type::LOCAL || type == Type::UNIX; }
   bool isRDMA() const { return type == Type::RDMA; }
+  bool isCXL() const { return type == Type::CXL; }
   bool isUNIX() const { return type == Type::UNIX; }
 
   bool operator==(const Address &other) const { return uint64_t(*this) == uint64_t(other); }

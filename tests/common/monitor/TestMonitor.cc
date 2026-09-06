@@ -63,6 +63,42 @@ TEST(TestMonitor, StartAndStop) {
   Monitor::stop();
 }
 
+template <typename RecorderType>
+void checkCompletedOperationLatency() {
+  RecorderType recorder("completed_operation_latency");
+  for (bool tagged : {false, true}) {
+    for (bool success : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << "tagged=" << tagged << " success=" << success);
+      auto guard = tagged ? recorder.record(TagSet{{"case", "tagged"}}) : recorder.record();
+      EXPECT_FALSE(guard.latency().has_value());
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      guard.reportWithCode(success ? StatusCode::kOK : StatusCode::kUnknown);
+      const auto completed = RelativeTime::now();
+      ASSERT_TRUE(guard.latency().has_value());
+      const auto latency = *guard.latency();
+      EXPECT_GE(latency.count(), std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     std::chrono::milliseconds(2)).count());
+      EXPECT_LE(latency.count(), (completed - guard.startTime()).count());
+      // Logging and destructor reporting must keep the first completion time.
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      guard.reportWithCode(success ? StatusCode::kUnknown : StatusCode::kOK);
+      EXPECT_EQ(guard.latency(), latency);
+    }
+  }
+  auto dismissed = recorder.record();
+  dismissed.dismiss();
+  dismissed.reportWithCode(StatusCode::kOK);
+  EXPECT_FALSE(dismissed.latency().has_value());
+}
+
+TEST(TestMonitor, CompletedOperationLatency) {
+  checkCompletedOperationLatency<OperationRecorder>();
+}
+
+TEST(TestMonitor, CompletedSimpleOperationLatency) {
+  checkCompletedOperationLatency<SimpleOperationRecorder>();
+}
+
 TEST(TestMonitor, CountRecorder) {
   auto &collector = Monitor::getDefaultInstance().getCollector();
   CountRecorder testAdder("test_addr");

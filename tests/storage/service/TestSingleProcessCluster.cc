@@ -26,9 +26,11 @@ class TestSingleProcessCluster : public UnitTestFabric, public ::testing::TestWi
 #endif
 
     // init ib device
+#if HF3FS_ENABLE_RDMA
     net::IBDevice::Config ibConfig;
     auto ibResult = net::IBManager::start(ibConfig);
     ASSERT_OK(ibResult);
+#endif
 
     ASSERT_TRUE(setUpStorageSystem());
 
@@ -39,6 +41,7 @@ class TestSingleProcessCluster : public UnitTestFabric, public ::testing::TestWi
 
     mgmtdServer_.config.service().set_check_status_interval(200_ms);
     mgmtdServer_.config.service().set_heartbeat_fail_interval(1_s);
+    updateMgmtdConfig();
 
     clientConfig_.retry().set_init_wait_time(200_ms);
     clientConfig_.retry().set_max_wait_time(5_s);

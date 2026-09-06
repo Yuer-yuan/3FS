@@ -10,7 +10,7 @@
 
 #include "client/mgmtd/RoutingInfo.h"
 #include "common/app/ClientId.h"
-#include "common/net/ib/RDMABuf.h"
+#include "common/net/Buffer.h"
 #include "common/utils/Reflection.h"
 #include "common/utils/Result.h"
 #include "common/utils/StrongType.h"
@@ -35,7 +35,7 @@ STRONG_TYPEDEF(uint64_t, ChannelSeqNum);
 #define BITFLAGS_CONTAIN(x, bits) (((x) & static_cast<uint32_t>(bits)) == static_cast<uint32_t>(bits))
 
 #define ALIGN_LOWER(mem, align) ((mem) / (align) * (align))
-#define ALIGN_UPPER(mem, align) (((mem) + (align)-1) / (align) * (align))
+#define ALIGN_UPPER(mem, align) (((mem) + (align) - 1) / (align) * (align))
 
 /* start of fault injection helpers */
 
@@ -72,7 +72,8 @@ enum class ChecksumType : uint8_t {
 enum class FeatureFlags : uint32_t {
   DEFAULT = 0,
   BYPASS_DISKIO = 1,
-  BYPASS_RDMAXMIT = 2,
+  BYPASS_BULK_XMIT = 2,
+  BYPASS_RDMAXMIT = BYPASS_BULK_XMIT,  // deprecated wire-compatible source alias
   SEND_DATA_INLINE = 4,
   ALLOW_READ_UNCOMMITTED = 8,
 };
@@ -204,7 +205,7 @@ static_assert(serde::Serializable<ChecksumInfo>);
 }  // namespace hf3fs::storage
 
 template <>
-struct ::hf3fs::serde::SerdeMethod<::hf3fs::storage::ChunkId> {
+struct hf3fs::serde::SerdeMethod<hf3fs::storage::ChunkId> {
   static std::string_view serdeTo(const storage::ChunkId &chunkId) { return chunkId.data(); }
   static Result<storage::ChunkId> serdeFrom(std::string_view str) { return storage::ChunkId(str); }
   static std::string serdeToReadable(const storage::ChunkId &chunkId) { return chunkId.describe(); };
@@ -310,7 +311,7 @@ struct ReadIO {
   SERDE_STRUCT_FIELD(offset, uint32_t{});
   SERDE_STRUCT_FIELD(length, uint32_t{});
   SERDE_STRUCT_FIELD(key, GlobalKey{});
-  SERDE_STRUCT_FIELD(rdmabuf, net::RDMARemoteBuf{});
+  SERDE_STRUCT_FIELD(remoteBuf, net::RemoteBufferHandle{});
 };
 static_assert(serde::Serializable<ReadIO>);
 
@@ -328,7 +329,7 @@ struct UpdateIO {
   SERDE_STRUCT_FIELD(length, uint32_t{});
   SERDE_STRUCT_FIELD(chunkSize, uint32_t{});
   SERDE_STRUCT_FIELD(key, GlobalKey{});
-  SERDE_STRUCT_FIELD(rdmabuf, net::RDMARemoteBuf{});
+  SERDE_STRUCT_FIELD(remoteBuf, net::RemoteBufferHandle{});
   SERDE_STRUCT_FIELD(updateVer, ChunkVer{});
   SERDE_STRUCT_FIELD(updateType, UpdateType{});
   SERDE_STRUCT_FIELD(checksum, ChecksumInfo{});
@@ -361,6 +362,9 @@ struct BatchReadReq {
   SERDE_STRUCT_FIELD(featureFlags, uint32_t{});
   SERDE_STRUCT_FIELD(checksumType, ChecksumType{});
   SERDE_STRUCT_FIELD(debugFlags, DebugFlags{});
+
+ public:
+  std::shared_ptr<void> requestLifetime;
 };
 static_assert(serde::Serializable<BatchReadReq>);
 
@@ -378,6 +382,9 @@ struct WriteReq {
   SERDE_STRUCT_FIELD(userInfo, flat::UserInfo{});
   SERDE_STRUCT_FIELD(featureFlags, uint32_t{});
   SERDE_STRUCT_FIELD(debugFlags, DebugFlags{});
+
+ public:
+  std::shared_ptr<void> requestLifetime;
 };
 static_assert(serde::Serializable<WriteReq>);
 
@@ -401,6 +408,9 @@ struct UpdateReq {
   SERDE_STRUCT_FIELD(userInfo, flat::UserInfo{});
   SERDE_STRUCT_FIELD(featureFlags, uint32_t{});
   SERDE_STRUCT_FIELD(debugFlags, DebugFlags{});
+
+ public:
+  std::shared_ptr<void> requestLifetime;
 };
 static_assert(serde::Serializable<UpdateReq>);
 

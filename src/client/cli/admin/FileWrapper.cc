@@ -1,14 +1,8 @@
 #include "FileWrapper.h"
 
-#include "common/net/ib/RDMABuf.h"
 #include "common/utils/Result.h"
 
 namespace hf3fs::client::cli {
-namespace {
-
-auto rdmabufPool = net::RDMABufPool::create(256_MB, 1024);
-
-}  // namespace
 
 static constexpr std::array<uint8_t, 16_MB> zeros{};
 
@@ -102,13 +96,13 @@ CoTryTask<storage::ChecksumInfo> FileWrapper::readFile(AdminEnv &env,
                                                        bool verbose /* = false */,
                                                        uint32_t targetIndex /* = 0 */) {
   auto client = env.storageClientGetter();
-  auto buffer = co_await rdmabufPool->allocate();
-  if (UNLIKELY(!buffer)) {
+  auto bufferResult = client->allocateIOBuffer(256_MB);
+  if (UNLIKELY(!bufferResult)) {
     XLOGF(ERR, "allocate buffer failed");
-    co_return makeError(RPCCode::kRDMANoBuf);
+    co_return makeError(std::move(bufferResult.error()));
   }
-  std::basic_string_view<uint8_t> data(buffer.ptr(), buffer.size());
-  auto readBuffer = storage::client::IOBuffer{buffer};
+  auto readBuffer = std::move(*bufferResult);
+  std::basic_string_view<uint8_t> data(readBuffer.data(), readBuffer.size());
   auto bufferOffset = 0;
   std::vector<storage::client::ReadIO> batch;
   storage::client::ReadOptions readOptions;
@@ -126,7 +120,7 @@ CoTryTask<storage::ChecksumInfo> FileWrapper::readFile(AdminEnv &env,
                                        &readBuffer);
     batch.push_back(std::move(readIO));
     bufferOffset += block.length;
-    if (&block == &blocks.back() || bufferOffset + (&block + 1)->length > buffer.size()) {
+    if (&block == &blocks.back() || bufferOffset + (&block + 1)->length > readBuffer.size()) {
       auto result = co_await client->batchRead(batch, env.userInfo, readOptions);
       CO_RETURN_AND_LOG_ON_ERROR(result);
       for (auto &readIO : batch) {

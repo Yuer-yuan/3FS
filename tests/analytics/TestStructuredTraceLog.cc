@@ -54,6 +54,7 @@ auto createStorageEventTrace(size_t id) {
                           .seqnum = storage::ChannelSeqNum{id},
                       },
                   },
+              .requestLifetime = {},
           },
   };
 }

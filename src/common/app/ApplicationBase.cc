@@ -6,6 +6,10 @@
 
 #include "common/app/ConfigManager.h"
 #include "common/app/Thread.h"
+#include "common/net/TransportRuntime.h"
+#if HF3FS_ENABLE_RDMA
+#include "common/net/ib/IBDevice.h"
+#endif
 #include "common/utils/OptionalUtils.h"
 #include "common/utils/RenderConfig.h"
 #include "common/utils/StringUtils.h"
@@ -279,6 +283,10 @@ void stopAndJoin(net::Server *server) {
   }
   XLOGF(INFO, "Stop server finished.");
   monitor::Monitor::stop();
+  auto cxlResult = hf3fs::net::TransportRuntime::stopCxl();
+  XLOGF_IF(ERR, !cxlResult, "Failed to stop CXL transport runtime: {}", cxlResult.error());
+#if HF3FS_ENABLE_RDMA
   hf3fs::net::IBManager::stop();
+#endif
 }
 }  // namespace hf3fs

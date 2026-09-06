@@ -7,10 +7,10 @@ void UserConfig::init(FuseConfig &config) {
   config_ = &config;
   configs_.reset(new AtomicSharedPtrTable<LocalConfig>(config.max_uid() + 1));
 
-  storageMaxConcXmit_ = config.storage().net_client().rdma_control().max_concurrent_transmission();
+  storageMaxConcXmit_ = config.storage().net_client().bulk_control().max_concurrent_transmission();
 
   config.addCallbackGuard([&config = config, this] {
-    storageMaxConcXmit_ = config.storage().net_client().rdma_control().max_concurrent_transmission();
+    storageMaxConcXmit_ = config.storage().net_client().bulk_control().max_concurrent_transmission();
 
     std::lock_guard lock(userMtx_);
     for (auto u : users_) {
@@ -55,7 +55,7 @@ Result<meta::Inode> UserConfig::setConfig(const char *key, const char *val, cons
 
   auto [isSys, kidx] = *kres;
   if (isSys) {
-    if (!strcmp(key, "storage.net_client.rdma_control.max_concurrent_transmission")) {
+    if (!strcmp(key, "storage.net_client.bulk_control.max_concurrent_transmission")) {
       auto n = atoi(val);
       if (n <= 0 || n > 2 * storageMaxConcXmit_) {
         return makeError(

@@ -12,7 +12,6 @@ ServiceGroup::ServiceGroup(const Config &config, ThreadPoolGroup &tpg)
       processor_(serdeServices_, tpg.procThreadPool(), config_.processor()),
       ioWorker_(processor_, tpg.ioThreadPool(), tpg.connThreadPool(), config_.io_worker()),
       listener_(config_.listener(),
-                config_.io_worker().ibsocket(),
                 ioWorker_,
                 tpg.connThreadPool(),
                 config_.network_type()) {}
@@ -23,6 +22,9 @@ ServiceGroup::~ServiceGroup() {
 }
 
 Result<Void> ServiceGroup::setup() {
+  if (config_.network_type() == Address::CXL && !config_.service_plane()) {
+    return makeError(StatusCode::kInvalidConfig, "CXL service group requires an explicit service plane");
+  }
   RETURN_AND_LOG_ON_ERROR(listener_.setup());
   return Void{};
 }
@@ -48,7 +50,7 @@ void ServiceGroup::stopAndJoin() {
 CoTask<void> ServiceGroup::checkConnectionsRegularly() {
   while (true) {
     XLOGF(DBG9, "server@{} check connections", fmt::ptr(this));
-    ioWorker().checkConnections(Address{0, 0, Address::RDMA}, config_.connection_expiration_time());
+    ioWorker().checkConnections(Address{0, 0, config_.network_type()}, config_.connection_expiration_time());
     co_await folly::coro::sleep(config_.check_connections_interval().asMs());
   }
 }

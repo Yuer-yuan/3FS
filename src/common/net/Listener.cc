@@ -20,10 +20,14 @@
 #include "common/net/IfAddrs.h"
 #include "common/net/ServiceGroup.h"
 #include "common/net/Transport.h"
+#include "common/net/TransportRuntime.h"
+#include "common/net/cxl/CxlConnectService.h"
+#if HF3FS_ENABLE_RDMA
 #include "common/net/ib/IBConnect.h"
 #include "common/net/ib/IBConnectService.h"
 #include "common/net/ib/IBDevice.h"
 #include "common/net/ib/IBSocket.h"
+#endif
 #include "common/utils/Address.h"
 #include "common/utils/MagicEnum.hpp"
 #include "common/utils/Result.h"
@@ -37,6 +41,7 @@ static bool checkNicType(std::string_view nic, Address::Type type, std::string_v
     // TCP nic prefixes, a configurable prefix option is provided.
     case Address::TCP:
     case Address::RDMA:
+    case Address::CXL:
       return nic.starts_with("en") || nic.starts_with("eth") || nic.starts_with("bond") || nic.starts_with("xgbe") ||
              (!tcp_nic_custom_prefix.empty() && nic.starts_with(tcp_nic_custom_prefix));
     case Address::IPoIB:
@@ -49,12 +54,10 @@ static bool checkNicType(std::string_view nic, Address::Type type, std::string_v
 }
 
 Listener::Listener(const Config &config,
-                   const IBSocket::Config &ibconfig,
                    IOWorker &ioWorker,
                    folly::IOThreadPoolExecutor &connThreadPool,
                    Address::Type networkType)
     : config_(config),
-      ibconfig_(ibconfig),
       ioWorker_(ioWorker),
       connThreadPool_(connThreadPool),
       networkType_(networkType) {}
@@ -117,13 +120,35 @@ Result<Void> Listener::setup() {
 
 Result<Void> Listener::start(ServiceGroup &group) {
   if (networkType_ == Address::RDMA) {
+#if HF3FS_ENABLE_RDMA
     if (!IBManager::initialized()) {
       XLOGF(CRITICAL, "Address::Type is RDMA, but IBDevice not initialized!");
       return makeError(RPCCode::kIBDeviceNotInitialized);
     }
     auto accept = [this](auto socket) { acceptRDMA(std::move(socket)); };
-    auto service = std::make_unique<IBConnectService>(ibconfig_, accept, config_.rdma_accept_timeout_getter());
-    group.addSerdeService(std::move(service), Address::Type::TCP);
+    auto service = std::make_unique<IBConnectService>(ioWorker_.config().ibsocket(),
+                                                      accept,
+                                                      config_.rdma_accept_timeout_getter());
+    group.addSerdeService(std::move(service), ServicePlane::Control);
+#else
+    return makeError(RPCCode::kDataPlaneNotInitialized, "RDMA support is disabled in this build");
+#endif
+  }
+
+  if (networkType_ == Address::CXL) {
+    auto fabric = TransportRuntime::cxlFabric();
+    if (!fabric) {
+      return makeError(RPCCode::kDataPlaneNotInitialized, "CXL listener requires a started process fabric");
+    }
+    auto accept = [this](std::unique_ptr<cxl::CxlSocket> socket, ServicePlane plane) -> Result<Void> {
+      auto transport = ioWorker_.addCxlSocket(std::move(socket), plane);
+      if (!transport) {
+        return makeError(std::move(transport.error()));
+      }
+      return Void{};
+    };
+    auto service = std::make_unique<cxl::CxlConnectService>(std::move(fabric), std::move(accept));
+    RETURN_ON_ERROR(group.addSerdeService(std::move(service), ServicePlane::Control));
   }
 
   if (UNLIKELY(addressList_.empty())) {
@@ -195,6 +220,7 @@ CoTask<void> Listener::acceptTCP(std::unique_ptr<folly::coro::Transport> tr) {
   co_return;
 }
 
+#if HF3FS_ENABLE_RDMA
 void Listener::acceptRDMA(std::unique_ptr<IBSocket> socket) {
   auto result = ioWorker_.addIBSocket(std::move(socket));
   if (result.hasError()) {
@@ -206,7 +232,6 @@ void Listener::acceptRDMA(std::unique_ptr<IBSocket> socket) {
   ++running_;
   co_withCancellation(cancel_.getToken(), checkRDMA(*result)).scheduleOn(&connThreadPool_).start();
 }
-
 CoTask<void> Listener::checkRDMA(std::weak_ptr<Transport> weak) {
   SCOPE_EXIT { --running_; };
   auto result = co_await co_awaitTry(folly::coro::sleep(config_.rdma_accept_timeout()));
@@ -218,12 +243,16 @@ CoTask<void> Listener::checkRDMA(std::weak_ptr<Transport> weak) {
   if (!transport) {
     co_return;
   }
-  if (auto ib = transport->ibSocket(); ib && !ib->checkConnectFinished()) {
-    XLOGF(ERR, "IBSocket {} still in ACCEPTED state after wait {}", ib->describe(), config_.rdma_accept_timeout());
+  if (!transport->rdmaConnectFinished()) {
+    XLOGF(ERR,
+          "IBSocket {} still in ACCEPTED state after wait {}",
+          transport->describe(),
+          config_.rdma_accept_timeout());
     transport->invalidate();
     co_return;
   }
 }
+#endif
 
 CoTask<void> Listener::release(folly::coro::ServerSocket /* socket */) {
   XLOGF(DBG, "release a unused TCP server socket");

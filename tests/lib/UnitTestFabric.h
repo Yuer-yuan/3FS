@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/utils/AtomicSharedPtr.h"
 #include <map>
 #include <vector>
 
@@ -12,6 +13,7 @@
 #include "tests/GtestHelpers.h"
 #include "tests/client/ClientWithConfig.h"
 #include "tests/client/ServerWithConfig.h"
+#include "tests/lib/CxlStorageTestFixture.h"
 #include "tests/mgmtd/MgmtdTestHelper.h"
 
 namespace hf3fs::test {
@@ -79,7 +81,7 @@ class FakeMgmtdClient : public hf3fs::client::IMgmtdClientForClient, public hf3f
   }
 
  private:
-  folly::atomic_shared_ptr<hf3fs::client::RoutingInfo> routingInfo_;
+  hf3fs::AtomicSharedPtr<hf3fs::client::RoutingInfo> routingInfo_;
   std::vector<RoutingInfoListener> listeners_;
 };
 
@@ -204,9 +206,12 @@ class UnitTestFabric {
 
   bool setUpStorageSystem();
 
-  void tearDownStorageSystem();
+  bool tearDownStorageSystem();
 
-  std::unique_ptr<storage::StorageServer> createStorageServer(size_t nodeIndex);
+  std::unique_ptr<StorageTestServer> createStorageServer(size_t nodeIndex);
+
+  std::vector<net::Address> mgmtdAddresses() const;
+  void updateMgmtdConfig();
 
   std::shared_ptr<hf3fs::flat::RoutingInfo> getRoutingInfo();
 
@@ -287,7 +292,10 @@ class UnitTestFabric {
   std::vector<std::vector<folly::test::TemporaryDirectory>> tmpDataPaths_;
   std::vector<storage::StorageTargets::Config> targetsConfigs_;
   std::vector<storage::StorageServer::Config> serverConfigs_;
-  std::vector<std::unique_ptr<storage::StorageServer>> storageServers_;
+  std::unique_ptr<CxlStorageTestFixture> cxlFixture_;
+  std::function<void(CxlStorageTestFixture &)> prepareCxlServices_;
+  std::vector<std::filesystem::path> cxlTempDataPaths_;
+  std::vector<std::unique_ptr<StorageTestServer>> storageServers_;
   MgmtdServerWithConfig mgmtdServer_{kClusterId, flat::NodeId(10000)};
 
   SystemSetupConfig setupConfig_;
