@@ -41,9 +41,14 @@ static bool checkNicType(std::string_view nic, Address::Type type, std::string_v
     // TCP nic prefixes, a configurable prefix option is provided.
     case Address::TCP:
     case Address::RDMA:
-    case Address::CXL:
       return nic.starts_with("en") || nic.starts_with("eth") || nic.starts_with("bond") || nic.starts_with("xgbe") ||
              (!tcp_nic_custom_prefix.empty() && nic.starts_with(tcp_nic_custom_prefix));
+    case Address::CXL:
+      // Native single-host deployments use loopback for the CXL bootstrap
+      // control plane while their serving data plane remains in CXL memory.
+      // Keep accepting the normal Ethernet interfaces used by VM deployments.
+      return nic == "lo" || nic.starts_with("en") || nic.starts_with("eth") || nic.starts_with("bond") ||
+             nic.starts_with("xgbe") || (!tcp_nic_custom_prefix.empty() && nic.starts_with(tcp_nic_custom_prefix));
     case Address::IPoIB:
       return nic.starts_with("ib");
     case Address::LOCAL:

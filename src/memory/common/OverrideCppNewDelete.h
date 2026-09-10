@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdalign>
 #include <cstdlib>
 
 #include "GlobalMemoryAllocator.h"

@@ -96,6 +96,9 @@ class TransportRuntime {
     CONFIG_ITEM(poll_spin, 20_us);
     CONFIG_ITEM(poll_yields, 8u);
     CONFIG_ITEM(poll_sleep, 10_us);
+    CONFIG_ITEM(poll_adaptive, true);
+    CONFIG_ITEM(poll_idle_sleep_min, 1_us);
+    CONFIG_ITEM(poll_idle_sleep_max, 50_us);
     CONFIG_ITEM(authority_owner_lock, std::string{});
     CONFIG_ITEM(authority_receipt, std::string{});
   };

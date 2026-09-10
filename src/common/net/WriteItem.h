@@ -131,11 +131,17 @@ struct WriteItem {
   bool isReq() const { return uuid != std::numeric_limits<size_t>::max(); }
   std::optional<PublicationRange> publication;
   std::shared_ptr<void> requestLifetime;
+  // Diagnostic identity, independent of uuid's request/retry sentinel.
+  uint64_t traceUuid{};
+  uint16_t traceService{}, traceMethod{};
 
   template <serde::SerdeType T>
   static auto createMessage(const T &packet, const CoreRequestOptions &options) {
     auto item = Pool::get();
     item->buf = SerdeBuffer::create(packet, options);
+    item->traceUuid = packet.uuid;
+    item->traceService = packet.serviceId;
+    item->traceMethod = packet.methodId;
     item->maxRetryTimes = options.sendRetryTimes;
     item->requestLifetime = options.requestLifetime;
     return item;

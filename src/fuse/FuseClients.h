@@ -75,6 +75,7 @@ struct RcInode {
     uint32_t dynStripe = 1;  // dynamic stripe
 
     uint64_t truncateVer = 0;                         // largest known truncate version.
+    meta::VersionedLength knownLength;                // authoritative length returned by meta.
     std::optional<meta::VersionedLength> hintLength;  // local hint length
     std::optional<UtcTime> atime;                     // local read time, but only update for write open
     std::optional<UtcTime> mtime;                     // local write time
@@ -93,6 +94,7 @@ struct RcInode {
         fsynced = std::max(fsynced, syncver);
       }
       truncateVer = std::max(truncateVer, inode.asFile().truncateVer);
+      knownLength = inode.asFile().getVersionedLength();
       dynStripe = inode.asFile().dynStripe;
     }
   };
@@ -114,12 +116,24 @@ struct RcInode {
     if (inode.isFile()) {
       auto guard = dynamicAttr.wlock();
       guard->truncateVer = inode.asFile().truncateVer;
+      guard->knownLength = inode.asFile().getVersionedLength();
       guard->hintLength = meta::VersionedLength{0, guard->truncateVer};
       guard->dynStripe = inode.asFile().dynStripe;
     }
   }
 
   uint64_t getTruncateVer() const { return dynamicAttr.rlock()->truncateVer; }
+
+  uint64_t getKnownLength() const {
+    auto guard = dynamicAttr.rlock();
+    if (!guard->hintLength || guard->hintLength->truncateVer < guard->knownLength.truncateVer) {
+      return guard->knownLength.length;
+    }
+    if (guard->hintLength->truncateVer > guard->knownLength.truncateVer) {
+      return guard->hintLength->length;
+    }
+    return std::max(guard->knownLength.length, guard->hintLength->length);
+  }
 
   void update(const Inode &inode, uint64_t syncver = 0, bool fsync = false) {
     if (!inode.isFile()) {
@@ -178,6 +192,7 @@ struct DirEntryInodeVector {
 };
 
 struct FuseClients {
+  std::jthread diagnosticThread;
   FuseClients() = default;
   ~FuseClients();
 

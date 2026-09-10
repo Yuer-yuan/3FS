@@ -72,11 +72,20 @@ class IO500StandardTest(unittest.TestCase):
             subprocess.run(['cc', '-O2', '-Wall', '-Wextra', '-Werror',
                             str(source), '-o', str(child)], check=True)
             process = subprocess.Popen([str(relay), str(child)], stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT, text=True)
+                                       stderr=subprocess.STDOUT, text=True,
+                                       env={**os.environ, 'HF3FS_IO500_RANK': '3',
+                                            'HF3FS_IO500_HEARTBEAT_MS': '100'})
             try:
                 readable, _, _ = select.select([process.stdout], [], [], 0.5)
                 self.assertTrue(readable, 'child output remained buffered behind the relay')
                 self.assertEqual(process.stdout.readline(), 'ready\n')
+                readable, _, _ = select.select([process.stdout], [], [], 0.5)
+                self.assertTrue(readable, 'relay did not emit a bounded progress heartbeat')
+                heartbeat = process.stdout.readline()
+                self.assertRegex(heartbeat, r'^HF3FS_IO500_HEARTBEAT rank=3 pid=\d+ '
+                                 r'elapsed_ms=\d+ output_bytes=\d+ state=\S+ wchan=\S+ ')
+                self.assertIn('utime_ticks=', heartbeat)
+                self.assertIn('write_bytes=', heartbeat)
                 self.assertEqual(process.wait(timeout=2), 7)
             finally:
                 if process.poll() is None:
@@ -219,6 +228,23 @@ class IO500StandardTest(unittest.TestCase):
         self.assertEqual([r['name'] for r in watchdog.records], list(io500.PHASES))
         watchdog.observe('', 5000*10**9)
 
+    def test_watchdog_records_rank_heartbeats_and_current_phase(self):
+        watchdog = io500.PhaseWatchdog()
+        watchdog.observe('IO500 version pinned\n', 10)
+        line = ('HF3FS_IO500_HEARTBEAT rank=3 pid=77 elapsed_ms=30000 '
+                'output_bytes=4096 state=D wchan=fuse_wait_answ '
+                'utime_ticks=11 stime_ticks=12 voluntary_ctxt=13 '
+                'nonvoluntary_ctxt=14 rchar=15 wchar=16 syscr=17 syscw=18 '
+                'read_bytes=19 write_bytes=20\n')
+        watchdog.observe(line[:80], 20)
+        watchdog.observe(line[80:], 21)
+        self.assertEqual(watchdog.current_phase, 'ior-easy-write')
+        self.assertEqual(watchdog.last_progress_ns, 21)
+        self.assertEqual(watchdog.heartbeats[0]['rank'], 3)
+        self.assertEqual(watchdog.heartbeats[0]['state'], 'D')
+        self.assertEqual(watchdog.heartbeats[0]['write_bytes'], 20)
+        self.assertEqual(watchdog.heartbeats[0]['observed_ns'], 21)
+
     def test_watchdog_stops_on_the_first_fatal_ior_output(self):
         for line in ('WARNING: write(15, 0x7fffa7d29000, 2097152) failed I/O error',
                      'WARNING: read(15, 0x7fffa7d29000, 2097152) failed I/O error',
@@ -233,6 +259,10 @@ class IO500StandardTest(unittest.TestCase):
             self.assertEqual(watchdog.records, [])
 
     def test_watchdog_rejects_timeout_invalid_duplicate_and_out_of_order(self):
+        watchdog = io500.PhaseWatchdog()
+        watchdog.observe('rank startup\n', 1)
+        with self.assertRaisesRegex(TimeoutError, 'banner was not observed'):
+            watchdog.observe('', (io500.BANNER_TIMEOUT_SECONDS + 1) * 10**9)
         for content in ('[INVALID] result\n', 'ior-hard-write 1 GiB/s : time 300 seconds\n',
                         'ior-easy-write 1 GiB/s : time nan seconds\n',
                         'ior-easy-write 1 GiB/s : time 601 seconds\n'):
@@ -296,7 +326,9 @@ class IO500StandardTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             roots = [Path(tmp)/str(n) for n in range(11)]
             for root in roots:
-                (root/'opt/io500/etc').mkdir(parents=True)
+                # The runner supplies sparse configuration overlays, not a
+                # copy of the base image's /opt/io500 payload directory.
+                root.mkdir()
             record = io500.stage_roots(roots)
             for node, root in enumerate(roots):
                 hosts = dict(line.split()[::-1] for line in (root/'etc/hosts').read_text().splitlines())

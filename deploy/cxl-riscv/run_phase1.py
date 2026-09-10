@@ -18,6 +18,9 @@ import uuid
 import full_stack
 import guest_image
 import io500_standard
+import minimal_requests
+import starvation_probe
+import scaling_probe
 import prepare_io500
 import run_g0 as g0
 import stage_full_rootfs
@@ -65,14 +68,19 @@ def verify_reference(reference_path: Path, rootfs_record: dict, artifacts: dict)
     for name, artifact in artifacts.items():
         if artifact["sha256"] != result["platform_artifacts"][name]["sha256"]:
             raise ValueError("G0-B platform artifact changed: " + name)
+    # G0-B proves the platform and 3FS application stack. Benchmark payloads
+    # have a separate pinned manifest and are verified below for standard runs;
+    # changing an IO500-only helper must not invalidate the platform proof.
     for name, artifact in rootfs_record["binaries"].items():
+        if name.startswith("io500/"):
+            continue
         if artifact.get("sha256") != result["binaries"].get(name, {}).get("sha256"):
             raise ValueError("G0-B staged binary changed: " + name)
     return dict(
         reference=reference,
         reference_sha256=g0.sha256_file(reference_path),
         verified=True,
-        compatibility="exact-platform-and-staged-binary-hashes",
+        compatibility="exact-platform-and-staged-3fs-binary-hashes",
         build_manifest_sha256=rootfs_record["build_manifest_sha256"],
         source_closure_sha256=rootfs_record["source_closure_sha256"],
         g0_build_manifest_sha256=result["build_manifest_sha256"],
@@ -222,8 +230,19 @@ def validate_phase1_result(result: dict) -> list[str]:
 
 def execute(args) -> Path:
     workload = getattr(args, "workload", "qualification")
-    if workload not in ("qualification", "io500-standard"):
+    if workload not in ("qualification", "io500-standard", "diagnostic-minimal", "diagnostic-minimal-retirement", "diagnostic-starvation", "diagnostic-scale"):
         raise ValueError("unsupported phase-1 workload")
+    diagnostic_clients = getattr(args, "diagnostic_clients", None)
+    if diagnostic_clients is not None and workload != "diagnostic-scale":
+        raise ValueError("client-count override is only allowed for diagnostic-scale")
+    fdb_cpus = getattr(args, "diagnostic_fdb_cpus", "0")
+    if fdb_cpus not in ("0", "0-1") or (workload != "diagnostic-scale" and fdb_cpus != "0"):
+        raise ValueError("FDB affinity override is only allowed for diagnostic-scale")
+    clients = diagnostic_clients if diagnostic_clients is not None else CLIENTS
+    if not 1 <= clients <= CLIENTS:
+        raise ValueError("diagnostic client count must be between 1 and 10")
+    if workload == "diagnostic-scale" and args.smp != 5:
+        raise ValueError("diagnostic-scale preserves the existing five-hart machine configuration")
     standard = workload == "io500-standard"
     paths = g0.PlatformPaths(*(getattr(args, name).resolve(strict=True) for name in
                              ("qemu", "cxlmemsim_server", "topology", "opensbi", "uboot", "kernel")))
@@ -253,8 +272,8 @@ def execute(args) -> Path:
     result_path = run / "result.json"
     config = g0.RuntimeConfig(args.guest_memory, args.timeout, args.smp)
     result = dict(schema=io500_standard.SCHEMA if standard else SCHEMA,
-                  result_class="measured" if standard else "qualification", workload=workload,
-                  status="failed", first_failure=None,
+                  result_class="measured" if standard else ("diagnostic" if workload.startswith("diagnostic-") else "qualification"), workload=workload,
+                  status="failed", first_failure=None, client_count=clients,
                   owner_token=token, g0_b=reference, platform_artifacts=artifacts, capacity=CAPACITY,
                   lane_count=LANES, binaries=rootfs["binaries"], qemu_commands=[], guests=[], dax_directions=[],
                   orchestration_seconds={},
@@ -277,13 +296,13 @@ def execute(args) -> Path:
     try:
         step_start = time.monotonic()
         roots, result["configuration"] = full_stack.stage_roots(
-            root, run, time.time_ns(), clients=CLIENTS, region_length=REGION_LENGTH, lane_count=LANES)
+            root, run, time.time_ns(), clients=clients, region_length=REGION_LENGTH, lane_count=LANES, cohort_config=True)
         if standard:
             result["io500_configuration"] = io500_standard.stage_roots(roots)
         result["orchestration_seconds"]["stage_roots"] = round(time.monotonic() - step_start, 6)
-        config_images = [run / f"node{node}-config.ext4" for node in range(11)]
-        backings = [run / f"node{node}-cxl.raw" for node in range(11)]
-        lsas = [run / f"node{node}-lsa.raw" for node in range(11)]
+        config_images = [run / f"node{node}-config.ext4" for node in range(clients + 1)]
+        backings = [run / f"node{node}-cxl.raw" for node in range(clients + 1)]
+        lsas = [run / f"node{node}-lsa.raw" for node in range(clients + 1)]
 
         rootfs_manifest_sha256 = g0.sha256_file(args.rootfs_manifest)
         cache_key, cache_content = rootfs_image_identity(root, rootfs, args.image_bytes)
@@ -336,8 +355,8 @@ def execute(args) -> Path:
             g0._create_sparse(lsa, g0.LSA_CAPACITY, 0x71 + node)
 
         step_start = time.monotonic()
-        with ThreadPoolExecutor(max_workers=11) as pool:
-            list(pool.map(create_node_storage, range(11)))
+        with ThreadPoolExecutor(max_workers=clients + 1) as pool:
+            list(pool.map(create_node_storage, range(clients + 1)))
         result["image_cache"]["config_images"] = [
             str(image.with_suffix(image.suffix + ".manifest.json")) for image in config_images]
         central = run / "cxl-authority.raw"
@@ -346,7 +365,7 @@ def execute(args) -> Path:
         server_command = g0.build_server_command(paths, coherence_port=reservation.port, trace=None,
                                                 backing=central, capacity=CAPACITY)
         result["platform_contract"] = dict(server_command=server_command, hpa_base=g0.CXL_HPA_BASE,
-            capacity=CAPACITY, backing_policy="all-distinct", guest_count=11,
+            capacity=CAPACITY, backing_policy="all-distinct", guest_count=clients + 1,
             guest_memory=config.guest_memory, smp=config.smp, image_bytes=args.image_bytes,
             root_disk_policy="shared-immutable-base-qemu-snapshot",
             node_config_disk_bytes=16 * 1024**2,
@@ -362,10 +381,11 @@ def execute(args) -> Path:
         persist()
         g0._wait_for_log(run / "cxlmemsim.log", "Server listening on TCP port", server, args.timeout)
         network.close()
-        for node in range(11):
-            command = g0.build_qemu_command(paths, config, node=node, guest_count=11, capacity=CAPACITY,
+        for node in range(clients + 1):
+            command = g0.build_qemu_command(paths, config, node=node, guest_count=clients + 1, capacity=CAPACITY,
                         coherence_port=reservation.port, root_image=base_image, root_snapshot=True,
-                        config_image=config_images[node], endpoint_memory=backings[node], lsa=lsas[node])
+                        config_image=config_images[node], endpoint_memory=backings[node], lsa=lsas[node],
+                        server_read_exclusive=False)
             command += network_args(node, group, network_port)
             result["qemu_commands"].append(command)
             console = g0.GuestConsole(command, run / f"node{node}-console.log", env)
@@ -373,7 +393,7 @@ def execute(args) -> Path:
             result.setdefault("owned_qemu_pids", []).append(console.process.pid)
             persist()
         step_start = time.monotonic()
-        with ThreadPoolExecutor(max_workers=11) as pool:
+        with ThreadPoolExecutor(max_workers=clients + 1) as pool:
             readiness = list(pool.map(
                 lambda item: g0._boot_guest(item[1], paths, item[0], args.timeout, CAPACITY,
                                             require_config_disk=True),
@@ -383,7 +403,7 @@ def execute(args) -> Path:
         if any(r["alignment"] != length or r["size"] != CAPACITY for r in readiness) or length > full_stack.REGION_OFFSET:
             raise ValueError("guest DAX geometries differ or overlap the application range")
         step_start = time.monotonic()
-        for client in range(1, 11):
+        for client in range(1, clients + 1):
             for writer, reader in ((0, client), (client, 0)):
                 generation = len(result["dax_directions"]) + 1
                 records = {}
@@ -413,8 +433,13 @@ def execute(args) -> Path:
         result["fdb"].update(guest=0, guest_server=True, bind_address="127.0.0.1:4500",
                              server_knobs=dict(g0.FDB_COHORT_KNOBS))
         persist()
-        result["applications"] = full_stack.execute(consoles, run, args.timeout, clients=10, region_length=REGION_LENGTH,
-            workload=io500_standard.execute if standard else None,
+        result["applications"] = full_stack.execute(consoles, run, args.timeout, clients=clients, region_length=REGION_LENGTH,
+            workload=io500_standard.execute if standard else (minimal_requests.execute if workload == "diagnostic-minimal" else
+                (minimal_requests.execute_and_retire if workload == "diagnostic-minimal-retirement" else
+                 (starvation_probe.execute if workload == "diagnostic-starvation" else
+                  ((lambda consoles, command, run: scaling_probe.execute(consoles, command, run,
+                      first_mask="3" if fdb_cpus == "0-1" else "1")) if workload == "diagnostic-scale" else None)))),
+            rpc_trace=not getattr(args, "no_rpc_trace", False), diagnostic_workload=workload.startswith("diagnostic-"),
             prepare_workload=io500_standard.preflight if standard else None)
         if result["applications"].get("first_failure"):
             result["first_failure"] = result["applications"]["first_failure"]
@@ -436,7 +461,7 @@ def execute(args) -> Path:
                 console.stop(timeout=30)
             except Exception as error:
                 result["first_failure"] = result["first_failure"] or f"guest teardown: {error}"
-        with ThreadPoolExecutor(max_workers=11) as pool:
+        with ThreadPoolExecutor(max_workers=clients + 1) as pool:
             list(pool.map(stop, reversed(consoles)))
         if server and server.poll() is None:
             try:
@@ -461,15 +486,21 @@ def execute(args) -> Path:
                             for n, c in enumerate(consoles)]
         persist()
     try:
-        result["coherence"] = g0.parse_coherence_stats(run / "cxlmemsim.log", 11)
+        result["coherence"] = g0.parse_coherence_stats(run / "cxlmemsim.log", clients + 1)
         result["coherence"]["dax_directions"] = [
             [item["writer_host"], item["reader_host"]] for item in result["dax_directions"]]
     except Exception as error:
         result["first_failure"] = result["first_failure"] or f"coherence validation: {error}"
-    result["validation_errors"] = validate_phase1_result(result)
+    if workload.startswith("diagnostic-"):
+        result["acceptance_evidence"] = False
+        result["validation_errors"] = validate_cohort_result(result)
+        if result.get("applications", {}).get("workload", {}).get("status") != "passed":
+            result["validation_errors"].append("minimal request diagnostic did not finish")
+    else:
+        result["validation_errors"] = validate_phase1_result(result)
     if not result["validation_errors"]:
         result["status"] = "passed"
-        result["marker"] = "HF3FS_CXL_IO500_STANDARD_OK" if standard else "HF3FS_CXL_10C1S_OK"
+        result["marker"] = "HF3FS_CXL_IO500_STANDARD_OK" if standard else ("HF3FS_CXL_DIAGNOSTIC_OK" if workload == "diagnostic-minimal" else "HF3FS_CXL_10C1S_OK")
         print(result["marker"], flush=True)
     persist()
     return result_path
@@ -478,10 +509,13 @@ def execute(args) -> Path:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--validate-result", type=Path)
-    parser.add_argument("--workload", choices=("qualification", "io500-standard"), default="qualification")
+    parser.add_argument("--workload", choices=("qualification", "io500-standard", "diagnostic-minimal", "diagnostic-minimal-retirement", "diagnostic-starvation", "diagnostic-scale"), default="qualification")
     for name in ("qemu", "cxlmemsim-server", "topology", "opensbi", "uboot", "kernel", "kernel-config",
                  "rootfs-manifest", "g0-b", "output-root"):
         parser.add_argument("--" + name, type=Path)
+    parser.add_argument("--diagnostic-clients", type=int, choices=range(1, 11))
+    parser.add_argument("--diagnostic-fdb-cpus", choices=("0", "0-1"), default="0")
+    parser.add_argument("--no-rpc-trace", action="store_true")
     parser.add_argument("--timeout", type=int, default=1800)
     parser.add_argument("--guest-memory", default="4G")
     parser.add_argument("--smp", type=int, default=5)

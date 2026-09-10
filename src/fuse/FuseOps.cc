@@ -1524,7 +1524,7 @@ void hf3fs_read(fuse_req_t req, fuse_ino_t fino, size_t size, off_t off, struct 
 
   std::vector<ssize_t> res(1);
   PioV ioExec(*d.storageClient, config.chunk_size_limit(), res);
-  auto retAdd = ioExec.addRead(0, inode, 0, off, size, memh.data(), memh);
+  auto retAdd = ioExec.addRead(0, inode, pi->getKnownLength(), 0, off, size, memh.data(), memh);
   if (retAdd.hasError()) {
     handle_error(req, retAdd);
     return;

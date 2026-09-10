@@ -1,6 +1,9 @@
 #pragma once
 
-#include "common/utils/AtomicSharedPtr.h"
+#include <cstdlib>
+
+#include "common/net/RpcTrace.h"
+
 #include "common/net/IOWorker.h"
 #include "common/net/Transport.h"
 #include "common/net/Waiter.h"
@@ -10,6 +13,7 @@
 #include "common/serde/MessagePacket.h"
 #include "common/serde/Serde.h"
 #include "common/serde/Service.h"
+#include "common/utils/AtomicSharedPtr.h"
 #include "common/utils/Duration.h"
 
 namespace hf3fs::serde {
@@ -72,6 +76,8 @@ class ClientContext {
     auto writeItem = net::WriteItem::createMessage(packet, options);
     writeItem->uuid = uuid;
     auto requestLength = writeItem->buf->length();
+    if (net::tracedRpc(ServiceID, MethodID)) net::rpcTrace(ServiceID, MethodID, uuid, "client_submit", 0,
+        fmt::format("destination={} bytes={} checksum={}", destAddr_, requestLength, writeItem->buf->header().checksum));
     if (LIKELY(std::holds_alternative<net::IOWorker *>(connectionSource_))) {
       std::get<net::IOWorker *>(connectionSource_)->sendAsync(destAddr_, net::WriteList(std::move(writeItem)));
     } else if (std::holds_alternative<net::Transport *>(connectionSource_)) {
@@ -85,6 +91,10 @@ class ClientContext {
 
     net::Waiter::instance().schedule(uuid, options.timeout);
     co_await item.baton;
+
+    if (net::tracedRpc(ServiceID, MethodID)) net::rpcTrace(ServiceID, MethodID, uuid, "client_waked",
+        item.status.code(), fmt::format("destination={} response_service={} response_method={}",
+                                       destAddr_, item.packet.serviceId, item.packet.methodId));
 
     if (UNLIKELY(!item.status)) {
       if (item.status.code() == RPCCode::kTimeout && std::holds_alternative<net::IOWorker *>(connectionSource_)) {
@@ -101,6 +111,8 @@ class ClientContext {
 
     Result<Rsp> rsp = makeError(StatusCode::kUnknown);
     auto deserializeResult = serde::deserialize(rsp, item.packet.payload);
+    if (net::tracedRpc(ServiceID, MethodID)) net::rpcTrace(ServiceID, MethodID, uuid, "client_payload_unpacked",
+        !deserializeResult ? deserializeResult.error().code() : (rsp.hasError() ? rsp.error().code() : 0));
     if (UNLIKELY(!deserializeResult)) {
       XLOGF(ERR, "deserialize rsp error: {}", deserializeResult.error());
       if (item.transport) {

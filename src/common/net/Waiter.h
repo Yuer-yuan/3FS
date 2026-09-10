@@ -77,7 +77,7 @@ class Waiter {
         uuid);
   }
 
-  void post(const serde::MessagePacket<> &packet, IOBufPtr buff) {
+  bool post(const serde::MessagePacket<> &packet, IOBufPtr buff) {
     auto item = find(packet.uuid);
     if (item) {
       item->buf = std::move(buff);
@@ -87,7 +87,9 @@ class Waiter {
         item->limiter->signal(RelativeTime::now() - item->timestamp);
       }
       item->baton.post();
+      return true;
     }
+    return false;
   }
 
   static void error(Item *item, Status status) {

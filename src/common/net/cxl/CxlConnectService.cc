@@ -219,6 +219,9 @@ CxlLaneConfig CxlConnectRsp::laneConfig() const {
         .payloadCellsOffset = directions[index]->payload_cells_offset,
     };
   }
+  config.laneId = lane_id;
+  config.requesterEndpoint = requester_endpoint;
+  config.targetEndpoint = target_endpoint;
   return config;
 }
 

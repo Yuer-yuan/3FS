@@ -1,6 +1,10 @@
 #include "FDB.h"
+#include "common/net/RpcTrace.h"
 
 #include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <folly/CancellationToken.h>
 #include <folly/Likely.h>
 #include <folly/experimental/coro/Baton.h>
@@ -103,18 +107,55 @@ void Result<KeyRangeArrayResult, std::vector<KeyRange>>::extractValue() {
 template <>
 void Result<EmptyResult, EmptyValue>::extractValue() {}
 
-static void coroCallback(FDBFuture *, void *para) {
-  auto baton = static_cast<folly::coro::Baton *>(para);
-  baton->post();
+namespace {
+
+using FutureTraceClock = std::chrono::steady_clock;
+std::atomic<uint64_t> nextFutureSequence{1};
+
+struct FutureAwaitContext {
+  folly::coro::Baton baton;
+  FutureTraceClock::time_point begin;
+  uint64_t sequence = 0;
+  bool trace = false;
+  std::atomic<uint64_t> callbackElapsedUs = 0;
+};
+
+bool futureTraceEnabled() {
+  static const bool enabled = [] {
+    const char *value = std::getenv("HF3FS_FDB_FUTURE_TRACE");
+    return value != nullptr && value[0] != '\0' && std::string_view(value) != "0";
+  }();
+  return enabled;
 }
+
+uint64_t futureTraceElapsedUs(const FutureAwaitContext &context) {
+  return std::chrono::duration_cast<std::chrono::microseconds>(FutureTraceClock::now() - context.begin).count();
+}
+
+void coroCallback(FDBFuture *, void *parameter) {
+  auto *context = static_cast<FutureAwaitContext *>(parameter);
+  context->callbackElapsedUs.store(futureTraceElapsedUs(*context), std::memory_order_release);
+  // post() may resume and finish the coroutine inline. Do not access context
+  // after this call because it belongs to that coroutine's frame.
+  if (context->trace) net::rpcTrace(0, 0, context->sequence, "fdb_callback");
+  context->baton.post();
+}
+
+}  // namespace
 
 template <class T, class V>
 Task<T> Result<T, V>::toTask(FDBFuture *f) {
   T result;
   result.future_.reset(f);
 
-  folly::coro::Baton baton;
-  result.error_ = fdb_future_set_callback(f, coroCallback, &baton);
+  FutureAwaitContext context;
+  context.begin = FutureTraceClock::now();
+  context.sequence = nextFutureSequence.fetch_add(1, std::memory_order_relaxed);
+  context.trace = net::RpcTrace::enabled();
+  if (context.trace) net::rpcTrace(0, 0, context.sequence, "fdb_register_begin", 0,
+                                 fmt::format("future={}", static_cast<const void *>(f)));
+  result.error_ = fdb_future_set_callback(f, coroCallback, &context);
+  if (context.trace) net::rpcTrace(0, 0, context.sequence, "fdb_registered", result.error());
   if (result.error()) {
     co_return result;
   }
@@ -124,7 +165,20 @@ Task<T> Result<T, V>::toTask(FDBFuture *f) {
     cancel = true;
     fdb_future_cancel(f);
   });
-  co_await baton;
+  co_await context.baton;
+  if (context.trace) net::rpcTrace(0, 0, context.sequence, "fdb_resumed", fdb_future_get_error(f));
+  const auto resumedElapsedUs = futureTraceElapsedUs(context);
+  if (futureTraceEnabled() && context.sequence <= 4096 && resumedElapsedUs >= 1'000'000) {
+    XLOGF(INFO,
+          "HF3FS_FDB_FUTURE sequence={} future={} ready={} canceled={} "
+          "callback_elapsed_us={} resumed_elapsed_us={}",
+          context.sequence,
+          static_cast<void *>(f),
+          fdb_future_is_ready(f),
+          cancel.load(),
+          context.callbackElapsedUs.load(std::memory_order_acquire),
+          resumedElapsedUs);
+  }
   if (cancel.load()) {
     throw folly::OperationCancelled();
   }

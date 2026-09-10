@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import datetime as dt
@@ -52,7 +53,11 @@ FDB_COHORT_KNOBS = dict(max_read_transaction_life_versions=60_000_000,
                         system_monitor_interval=30,
                         worker_logging_interval=30,
                         storage_logging_delay=30,
-                        run_loop_profiling_interval=0)
+                        run_loop_profiling_interval=0,
+                        # Diagnostic scheduler candidate: the RISC-V counter is
+                        # nanoseconds. Keep all RPC/FDB/phase deadlines intact.
+                        tsc_yield_time=100_000_000)
+
 HOST_DECODER = (
     "CXL host decoder0: HPA 0000001000000000 "
     "size 0000000010000000 target 0 ctrl 00000600"
@@ -121,6 +126,7 @@ def build_qemu_command(
     capacity: int = CXL_CAPACITY,
     root_snapshot: bool = False,
     config_image: Path | None = None,
+    server_read_exclusive: bool = False,
 ) -> list[str]:
     if not 2 <= guest_count <= 32 or not 0 <= node < guest_count:
         raise ValueError("node must be in the declared 2..32 guest cohort")
@@ -174,7 +180,7 @@ def build_qemu_command(
             f"cxlmemsim-port={coherence_port},coherence-v2-host-id={node},"
             "coherence-v2-cache-capacity=8388608,coherence-v2-cache-ways=4,"
             "coherence-v2-timeout-ms=5000,coherence-v2-write-through=off,"
-            f"coherence-v2-read-exclusive={'on' if node == 0 else 'off'}"
+            f"coherence-v2-read-exclusive={'on' if node == 0 and server_read_exclusive else 'off'}"
         ),
         "-drive",
         f"file={root_image},if=none,format=raw,id=root-{prefix}"
@@ -661,6 +667,8 @@ class GuestConsole:
             start_new_session=True,
             env=dict(environment),
         )
+        self.shell_lock = threading.Lock()
+        self.pending_shell_command = None
         self.output = ""
         self.output_chunks: list[tuple[int, int]] = []
         self.condition = threading.Condition()
@@ -730,21 +738,55 @@ class GuestConsole:
         return self.wait("=> ", timeout, since=start)
 
     def shell_command(self, command: str, timeout: float) -> str:
-        token = uuid.uuid4().hex
-        marker = f"HF3FS_G0_COMMAND token={token} rc="
-        start = len(self.output)
-        self.send(
-            f"{command}; hf3fs_command_rc=$?; "
-            f"printf 'HF3FS_G0_%s token=%s rc=%s\\n' COMMAND {token} $hf3fs_command_rc"
-        )
-        match = self.wait_regex(
-            re.compile(re.escape(marker) + r"([0-9]+)"), timeout, since=start
-        )
-        with self.condition:
-            captured = self.output[start : match.end()]
-        if int(match.group(1)) != 0:
-            raise G0Error(f"guest command failed with rc={match.group(1)}: {command}\n{captured}")
-        return captured[: match.start() - start]
+        # A quoted newline is still a physical UART input boundary. Require
+        # callers to use shell escapes, and never overlap commands on one UART.
+        if any(char in command for char in ("\n", "\r", "\0")):
+            raise ValueError("guest shell command must be one physical line")
+        deadline = time.monotonic() + timeout
+        if not self.shell_lock.acquire(timeout=max(0, timeout)):
+            raise TimeoutError("guest console is busy with another command")
+        try:
+            if self.pending_shell_command is not None:
+                pattern, start = self.pending_shell_command
+                self.wait_regex(pattern, max(0, deadline - time.monotonic()), since=start)
+                self.pending_shell_command = None
+            def wire(text: str, token: str) -> str:
+                return (f"{text}; hf3fs_command_rc=$?; "
+                        f"printf '\\nHF3FS_G0_%s token=%s rc=%s\\n' COMMAND {token} $hf3fs_command_rc")
+
+            def exchange(text: str) -> str:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("guest command deadline expired before submission")
+                token = uuid.uuid4().hex
+                marker = f"HF3FS_G0_COMMAND token={token} rc="
+                pattern = re.compile(r"(?m)^" + re.escape(marker) + r"([0-9]+)\r*\n")
+                line = wire(text, token)
+                if len(line.encode()) > 800:
+                    raise ValueError("guest command frame exceeds the UART input budget")
+                start = len(self.output)
+                self.pending_shell_command = (pattern, start)
+                self.send(line)
+                match = self.wait_regex(pattern, max(0, deadline - time.monotonic()), since=start)
+                self.pending_shell_command = None
+                with self.condition:
+                    captured = self.output[start : match.start()]
+                if int(match.group(1)) != 0:
+                    raise G0Error(f"guest command failed with rc={match.group(1)}: {command}\n{captured}")
+                return captured
+
+            if len(wire(command, "0" * 32).encode()) > 800:
+                # BusyBox's interactive line editor can truncate input before
+                # the kernel's larger canonical limit. Stage bounded, acked
+                # frames, then eval in this same shell so owned PIDs survive.
+                encoded = base64.b64encode(command.encode()).decode('ascii')
+                for offset in range(0, len(encoded), 512):
+                    prefix = "" if offset == 0 else '"$hf3fs_command_payload"'
+                    exchange(f"hf3fs_command_payload={prefix}'{encoded[offset:offset + 512]}'")
+                return exchange('eval "$(printf %s "$hf3fs_command_payload" | /bin/busybox base64 -d)"')
+            return exchange(command)
+
+        finally:
+            self.shell_lock.release()
 
     def stop(self, timeout: float = 15) -> None:
         if self.process.poll() is None:
@@ -1105,6 +1147,10 @@ def execute(
                 config_image=config_images[node] if profile == "full-3fs" else None,
                 endpoint_memory=endpoint_paths[node],
                 lsa=lsa_paths[node],
+                # G0 deliberately forces dirty ownership handoffs as a proof.
+                # Business runs use ordinary shared reads; forcing ownership
+                # there makes polling contend with peer readers and writers.
+                server_read_exclusive=True,
             )
             for node in (0, 1)
         ]

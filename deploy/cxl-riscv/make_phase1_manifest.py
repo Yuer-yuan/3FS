@@ -78,8 +78,8 @@ def select_roles(
         raise ManifestError(f"unknown phase-1 scenario: {scenario}")
     if replication_factor not in (1, 2, 3):
         raise ManifestError("replication factor must be 1, 2 or 3")
-    if clients not in (1, 2, 4, 10):
-        raise ManifestError("client count must be 1, 2, 4 or 10")
+    if clients not in (1, 2, 3, 4, 10):
+        raise ManifestError("client count must be 1, 2, 3, 4 or 10")
     declaration = scenarios[scenario]
     roles = list(declaration["base_roles"])
     if declaration.get("storage_roles"):
@@ -244,7 +244,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--topology", type=Path, default=DEFAULT_TOPOLOGY)
     parser.add_argument("--scenario", choices=("echo", "storage", "chain", "io500"), required=True)
     parser.add_argument("--replication-factor", type=int, choices=(1, 2, 3), default=1)
-    parser.add_argument("--clients", type=int, choices=(1, 2, 4, 10), default=1)
+    parser.add_argument("--clients", type=int, choices=(1, 2, 3, 4, 10), default=1)
     parser.add_argument("--session-generation", type=int, required=True)
     parser.add_argument("--authority-generation", type=int, default=1)
     parser.add_argument("--region-bytes", type=int, default=256 * 1024 * 1024)

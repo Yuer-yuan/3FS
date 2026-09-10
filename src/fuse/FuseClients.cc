@@ -1,4 +1,5 @@
 #include "FuseClients.h"
+#include "FuseDiagnostic.h"
 
 #include <folly/Random.h>
 #include <folly/ScopeGuard.h>
@@ -136,6 +137,7 @@ Result<Void> FuseClients::init(const flat::AppInfo &appInfo,
                                                  storageClient,
                                                  true /* dynStripe */);
   metaClient->start(client->tpg().bgThreadPool());
+  diagnosticThread = startFuseDiagnostic(metaClient);
 
   iojqs.reserve(3);
   iojqs.emplace_back(new BoundedQueue<IoRingJob>(fuseConfig.io_jobq_sizes().hi()));
@@ -177,6 +179,10 @@ Result<Void> FuseClients::init(const flat::AppInfo &appInfo,
 }
 
 void FuseClients::stop() {
+  if (diagnosticThread.joinable()) {
+    diagnosticThread.request_stop();
+    diagnosticThread.join();
+  }
   if (notifyInvalExec) {
     notifyInvalExec->stop();
     notifyInvalExec.reset();
@@ -303,7 +309,7 @@ CoTask<void> FuseClients::ioRingWorker(int i, int ths) {
               for (int i = 0; i < sqec; ++i) {
                 auto &arg = args[sqe[i].index];
                 Uuid id;
-                memcpy(id.data, arg.bufId, sizeof(id.data));
+                memcpy(id.bytes(), arg.bufId, id.static_size());
 
                 std::shared_ptr<lib::ShmBuf> shm;
                 if (i && id == lastId) {

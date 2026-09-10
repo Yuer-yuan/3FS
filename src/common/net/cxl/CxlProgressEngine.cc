@@ -50,6 +50,16 @@ void CxlProgressEngine::stopAndJoin() {
 }
 
 void CxlProgressEngine::loop() {
+  if (config_.adaptive) {
+    CxlIdleBackoff backoff(config_.idleSleepMin, config_.idleSleepMax);
+    while (!stop_.load(std::memory_order_acquire)) {
+      const auto delay = backoff.next(scanOnce());
+      std::this_thread::sleep_for(delay);
+      metrics_->addProgressSleep();
+    }
+    return;
+  }
+
   while (!stop_.load(std::memory_order_acquire)) {
     const auto spinStart = std::chrono::steady_clock::now();
     const auto spinEnd = spinStart + config_.spin;
@@ -72,11 +82,13 @@ void CxlProgressEngine::loop() {
   }
 }
 
-void CxlProgressEngine::scanOnce() noexcept {
+bool CxlProgressEngine::scanOnce() noexcept {
+  bool progressed = false;
   std::lock_guard lock(mutex_);
   for (auto *socket : sockets_) {
-    socket->progress();
+    progressed |= socket->progress();
   }
+  return progressed;
 }
 
 }  // namespace hf3fs::net::cxl

@@ -111,7 +111,9 @@ DATA="${TEST_DIR}/data"
 CONFIG="${TEST_DIR}/config"
 DEFAULT_LOG="${TEST_DIR}/log"
 LOG=${LOG_DIR:=${DEFAULT_LOG}}
-MOUNT=$(realpath "${TEST_DIR}/mnt")
+# The caller supplies a fresh, empty run directory, so the mountpoint does not
+# exist yet.  Canonicalize it without requiring the final path component.
+MOUNT=$(realpath -m "${TEST_DIR}/mnt")
 trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT

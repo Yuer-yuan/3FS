@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <span>
 
 #include "client/meta/MetaClient.h"
 #include "client/storage/StorageClient.h"
@@ -8,11 +9,23 @@
 
 namespace hf3fs::lib::agent {
 using flat::UserInfo;
+
+struct ReadIoOutcome {
+  size_t resultIndex;
+  uint8_t *data;
+  size_t requested;
+  const Result<uint32_t> *received;
+};
+
+void finishReadIoResults(std::vector<ssize_t> &results, std::span<const ReadIoOutcome> outcomes, bool allowHoles);
+size_t logicalReadLength(uint64_t fileLength, uint64_t offset, size_t requested);
+
 class PioV {
  public:
   PioV(storage::client::StorageClient &storageClient, int chunkSizeLim, std::vector<ssize_t> &res);
   hf3fs::Result<Void> addRead(size_t idx,
                               const meta::Inode &inode,
+                              uint64_t fileLength,
                               uint16_t track,
                               off_t off,
                               size_t len,

@@ -78,6 +78,18 @@ bool waitFd(int fd, std::chrono::milliseconds timeout = 1s) {
 
 }  // namespace
 
+TEST(CxlIdleBackoff, ResetsOnObservedProgress) {
+  CxlIdleBackoff backoff(1_us, 8_us);
+  EXPECT_EQ(backoff.next(false), 1_us);
+  EXPECT_EQ(backoff.next(false), 2_us);
+  EXPECT_EQ(backoff.next(false), 4_us);
+  EXPECT_EQ(backoff.next(false), 8_us);
+  EXPECT_EQ(backoff.next(false), 8_us);
+  EXPECT_EQ(backoff.next(true), 1_us);
+  EXPECT_EQ(backoff.next(false), 1_us);
+  EXPECT_EQ(backoff.next(false), 2_us);
+}
+
 class TestCxlSocket : public ::testing::Test {
  protected:
   void SetUp() override {

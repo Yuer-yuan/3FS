@@ -1,5 +1,9 @@
 #pragma once
 
+#include <cstdlib>
+
+#include "common/net/RpcTrace.h"
+
 #include "common/net/BulkTransfer.h"
 #include "common/net/Transport.h"
 #if HF3FS_ENABLE_RDMA
@@ -67,7 +71,25 @@ class CallContext {
 
     // call method.
     auto obj = reinterpret_cast<typename F::Object *>(service_.object);
+    const auto callStarted = SteadyClock::now();
+    const bool traceMeta = net::tracedRpc(packet_.serviceId, packet_.methodId);
+    if (traceMeta) net::rpcTrace(packet_.serviceId, packet_.methodId, packet_.uuid,
+                                "server_call_begin", 0, tr_->describe());
     auto result = co_await folly::coro::co_awaitTry((obj->*F::method)(*this, req));
+    const auto callElapsed = SteadyClock::now() - callStarted;
+    if (traceMeta) net::rpcTrace(packet_.serviceId, packet_.methodId, packet_.uuid, "server_call_end",
+        result.hasException() ? StatusCode::kUnknown : (result.value().hasError() ? result.value().error().code() : 0),
+        tr_->describe());
+    if (UNLIKELY(callElapsed >= 1_s)) {
+      XLOGF(WARN,
+            "HF3FS_RPC_SERVER_LONG uuid={} service={} method={} transport={} elapsed_ms={} peer={}",
+            packet_.uuid,
+            packet_.serviceId,
+            packet_.methodId,
+            static_cast<unsigned>(tr_->kind()),
+            std::chrono::duration_cast<std::chrono::milliseconds>(callElapsed).count(),
+            peer());
+    }
     if (UNLIKELY(result.hasException())) {
       XLOGF(FATAL,
             "Processor has exception: {}, request {}:{} {}",
@@ -160,7 +182,14 @@ class CallContext {
     send.flags = 0;
     send.version = packet_.version;
     send.timestamp = packet_.timestamp;
-    tr_->send(net::WriteList(net::WriteItem::createMessage(send, responseOptions_)));
+    auto item = net::WriteItem::createMessage(send, responseOptions_);
+    const bool trace = net::tracedRpc(send.serviceId, send.methodId);
+    if (trace) net::rpcTrace(send.serviceId, send.methodId, send.uuid, "server_response_serialized", 0,
+        fmt::format("{} bytes={} checksum={}", tr_->describe(), item->buf->length(), item->buf->header().checksum));
+    auto rejected = tr_->send(net::WriteList(std::move(item)));
+    if (trace) net::rpcTrace(send.serviceId, send.methodId, send.uuid,
+        rejected ? "server_response_rejected" : "server_response_accepted",
+        rejected ? RPCCode::kSendFailed : 0, tr_->describe());
   }
 
  private:

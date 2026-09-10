@@ -693,8 +693,18 @@ CoTryTask<void> GcManager::checkFs() {
   co_return co_await runReadOnly([&](auto &txn) -> CoTryTask<void> {
     // check tree roots exist
     auto exists = [](auto &val) { return val.has_value(); };
+    auto begin = SteadyClock::now();
+    XLOGF(INFO, "GcManager::checkFs root snapshot begin");
     auto root = (co_await Inode::snapshotLoad(txn, InodeId::root())).then(exists);
+    XLOGF(INFO,
+          "GcManager::checkFs root snapshot end, elapsed_ms {}",
+          std::chrono::duration_cast<std::chrono::milliseconds>(SteadyClock::now() - begin).count());
+    begin = SteadyClock::now();
+    XLOGF(INFO, "GcManager::checkFs gcRoot snapshot begin");
     auto gcRoot = (co_await Inode::snapshotLoad(txn, InodeId::gcRoot())).then(exists);
+    XLOGF(INFO,
+          "GcManager::checkFs gcRoot snapshot end, elapsed_ms {}",
+          std::chrono::duration_cast<std::chrono::milliseconds>(SteadyClock::now() - begin).count());
     CO_RETURN_ON_ERROR(root);
     CO_RETURN_ON_ERROR(gcRoot);
     if (!*root || !*gcRoot) {

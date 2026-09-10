@@ -129,8 +129,8 @@ CoTryTask<void> ResyncWorker::handleSync(VersionedChainId vChainId) {
 
   ClientId clientId{};
   static_assert(sizeof(ClientId::uuid) == sizeof(VersionedChainId) + sizeof(TargetId));
-  *reinterpret_cast<VersionedChainId *>(clientId.uuid.data) = vChainId;
-  *reinterpret_cast<TargetId *>(clientId.uuid.data + sizeof(VersionedChainId)) = targetId;
+  *reinterpret_cast<VersionedChainId *>(clientId.uuid.bytes()) = vChainId;
+  *reinterpret_cast<TargetId *>(clientId.uuid.bytes() + sizeof(VersionedChainId)) = targetId;
 
   monitor::TagSet tag;
   tag.addTag("instance", fmt::format("{}-{}", targetId, vChainId.chainVer));

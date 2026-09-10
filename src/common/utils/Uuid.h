@@ -6,6 +6,7 @@
 #include <boost/uuid/random_generator.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include <boost/version.hpp>
 #include <cstring>
 #include <optional>
 #include <string>
@@ -19,25 +20,41 @@ struct Uuid : boost::uuids::uuid {
   using is_serde_copyable = void;
   static thread_local boost::uuids::random_generator uuidGenerator;
 
-  static constexpr Uuid zero() { return {{0}}; }
+  static constexpr Uuid zero() { return {}; }
+  constexpr uint8_t *bytes() {
+#if BOOST_VERSION >= 108600
+    return data();
+#else
+    return data;
+#endif
+  }
+  constexpr const uint8_t *bytes() const {
+#if BOOST_VERSION >= 108600
+    return data();
+#else
+    return data;
+#endif
+  }
   static Uuid random() { return {uuidGenerator()}; }
   static Uuid max() {
     Uuid uuid;
-    memset(uuid.data, 0xff, sizeof(uuid.data));
+    memset(uuid.bytes(), 0xff, uuid.static_size());
     return uuid;
   }
 
   static Uuid from(uint64_t low, uint64_t high) {
     Uuid uuid;
-    memcpy(uuid.data, &low, sizeof(low));
-    memcpy(uuid.data + sizeof(low), &high, sizeof(high));
+    memcpy(uuid.bytes(), &low, sizeof(low));
+    memcpy(uuid.bytes() + sizeof(low), &high, sizeof(high));
     return uuid;
   }
 
   String toHexString() const { return boost::lexical_cast<String>(*this); }
   std::string serdeToReadable() const { return toHexString(); }
 
-  std::string_view asStringView() const { return std::string_view(reinterpret_cast<const char *>(data), sizeof(data)); }
+  std::string_view asStringView() const {
+    return std::string_view(reinterpret_cast<const char *>(bytes()), static_size());
+  }
 
   static Result<Uuid> fromHexString(std::string_view str) {
     try {

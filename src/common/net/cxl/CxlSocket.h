@@ -84,8 +84,9 @@ class CxlSocket final : public Socket {
   Result<Void> publishStaging();
   Result<Void> checkPeer() const;
   Events computeReady() const noexcept;
+  bool cacheLaneState() noexcept;
   void rearmAndRecheck(Events interest) noexcept;
-  void progress() noexcept;
+  bool progress() noexcept;
   void signal() noexcept;
   void markFault() const noexcept;
 
@@ -105,6 +106,13 @@ class CxlSocket final : public Socket {
   mutable std::atomic<uint64_t> lastDeliveredOffset_{};
   std::atomic<uint32_t> armedMask_{kEventReadableFlag | kEventWritableFlag};
   std::atomic<uint32_t> lastReadyMask_{};
+  std::atomic<uint64_t> lastSubmissionProducer_{};
+  std::atomic<uint64_t> lastSubmissionConsumer_{};
+  std::atomic<uint64_t> lastCompletionProducer_{};
+  std::atomic<uint64_t> lastCompletionConsumer_{};
+  std::atomic<uint64_t> firstPublishNs_{};
+  mutable std::atomic<uint64_t> firstInboundVisibleNs_{};
+  std::atomic<uint64_t> firstInboundConsumedNs_{};
   std::atomic<bool> closed_{};
   mutable std::atomic<bool> faulted_{};
   mutable std::mutex ownerMutex_;

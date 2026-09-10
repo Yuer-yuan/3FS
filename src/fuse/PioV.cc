@@ -13,6 +13,7 @@ PioV::PioV(storage::client::StorageClient &storageClient, int chunkSizeLim, std:
 
 hf3fs::Result<Void> PioV::addRead(size_t idx,
                                   const meta::Inode &inode,
+                                  uint64_t fileLength,
                                   uint16_t track,
                                   off_t off,
                                   size_t len,
@@ -27,6 +28,11 @@ hf3fs::Result<Void> PioV::addRead(size_t idx,
 
   if (rios_.empty()) {
     rios_.reserve(res_.size());
+  }
+
+  len = logicalReadLength(fileLength, off, len);
+  if (len == 0) {
+    return Void{};
   }
 
   size_t bufOff = 0;
@@ -265,9 +271,59 @@ void concatIoRes(bool read, std::vector<ssize_t> &res, const Io &ios, bool allow
   }
 }
 
+void finishReadIoResults(std::vector<ssize_t> &results, std::span<const ReadIoOutcome> outcomes, bool allowHoles) {
+  for (const auto &outcome : outcomes) {
+    auto &result = results.at(outcome.resultIndex);
+    if (result < 0) {
+      continue;
+    }
+
+    if (!*outcome.received) {
+      if (outcome.received->error().code() == StorageClientCode::kChunkNotFound) {
+        if (!allowHoles) {
+          result = -static_cast<ssize_t>(ClientAgentCode::kHoleInIoOutcome);
+          continue;
+        }
+        memset(outcome.data, 0, outcome.requested);
+        result += outcome.requested;
+      } else {
+        result = -static_cast<ssize_t>(outcome.received->error().code());
+      }
+      continue;
+    }
+
+    const auto received = static_cast<size_t>(**outcome.received);
+    if (received > outcome.requested) {
+      result = -static_cast<ssize_t>(StorageClientCode::kFoundBug);
+    } else if (received < outcome.requested) {
+      if (!allowHoles) {
+        result = -static_cast<ssize_t>(ClientAgentCode::kHoleInIoOutcome);
+        continue;
+      }
+      memset(outcome.data + received, 0, outcome.requested - received);
+      result += outcome.requested;
+    } else {
+      result += received;
+    }
+  }
+}
+
+size_t logicalReadLength(uint64_t fileLength, uint64_t offset, size_t requested) {
+  if (offset >= fileLength) {
+    return 0;
+  }
+  return std::min<uint64_t>(requested, fileLength - offset);
+}
+
 void PioV::finishIo(bool allowHoles) {
   if (wios_.empty()) {
-    concatIoRes(true, res_, rios_, allowHoles);
+    std::vector<ReadIoOutcome> outcomes;
+    outcomes.reserve(rios_.size());
+    for (const auto &io : rios_) {
+      outcomes.push_back(
+          ReadIoOutcome{reinterpret_cast<size_t>(io.userCtx), io.data, io.length, &io.result.lengthInfo});
+    }
+    finishReadIoResults(res_, outcomes, allowHoles);
   } else {
     concatIoRes(false, res_, wios_, false);
   }

@@ -141,6 +141,27 @@ class G0EvidenceTest(unittest.TestCase):
         ):
             self.assertIn(value, joined)
 
+    def test_shared_reads_and_explicit_server_ownership_negative_control(self):
+        paths = run_g0.PlatformPaths(*(Path(f"/platform/{name}") for name in (
+            "qemu", "cxlmemsim", "topology", "opensbi", "uboot", "Image"
+        )))
+        common = dict(coherence_port=12345, root_image=Path('/run/root'),
+                      endpoint_memory=Path('/run/cxl'), lsa=Path('/run/lsa'))
+        for node in (0, 1):
+            shared = run_g0.build_qemu_command(paths, run_g0.RuntimeConfig(), node=node, **common)
+            device = next(arg for arg in shared if arg.startswith('cxl-type3,'))
+            self.assertIn('coherence-v2-read-exclusive=off', device)
+            self.assertIn('coherence-v2=on,', device)
+            self.assertIn('hdm-db=on,', device)
+            self.assertIn('coherence-v2-timeout-ms=5000,', device)
+            proof = run_g0.build_qemu_command(paths, run_g0.RuntimeConfig(), node=node,
+                                             server_read_exclusive=True, **common)
+            # The negative control changes only the server read ownership policy.
+            expected = [arg.replace('coherence-v2-read-exclusive=off',
+                                    'coherence-v2-read-exclusive=on') if node == 0 else arg
+                        for arg in shared]
+            self.assertEqual(proof, expected)
+
     @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
     def test_fifo_trace_is_archived_losslessly_and_analyzed(self):
         with tempfile.TemporaryDirectory() as temporary:

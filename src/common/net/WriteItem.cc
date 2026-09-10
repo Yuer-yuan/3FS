@@ -7,6 +7,7 @@
 #include "common/net/PublicationLedger.h"
 #include "common/net/Transport.h"
 #include "common/net/Waiter.h"
+#include "common/net/RpcTrace.h"
 
 namespace hf3fs::net {
 
@@ -65,6 +66,10 @@ Result<Void> WriteList::assignPublicationRanges(PublicationLedger &ledger) {
       return makeError(std::move(range.error()));
     }
     item->publication = *range;
+    if (tracedRpc(item->traceService, item->traceMethod)) rpcTrace(
+        item->traceService, item->traceMethod, item->traceUuid, "publication_reserved", 0,
+        fmt::format("ledger={} generation={} begin={} end={} checksum={}", fmt::ptr(&ledger),
+                    range->laneGeneration, range->beginOffset, range->endOffset, item->buf->header().checksum));
   }
   return Void{};
 }

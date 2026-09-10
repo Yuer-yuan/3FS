@@ -133,7 +133,7 @@ CoTask<void> IoRing::process(
       distinctFiles.insert(args.fileIid);
 
       Uuid id;
-      memcpy(id.data, args.bufId, sizeof(id.data));
+      memcpy(id.bytes(), args.bufId, id.static_size());
       distinctBufs.insert(id);
 
       ioSizeDist.addSample(args.ioLen, monitor::TagSet{{"io", ioType}, {"uid", uids}});
@@ -169,7 +169,14 @@ CoTask<void> IoRing::process(
       }
 
       auto addRes = forRead_
-                        ? ioExec.addRead(i, inodes[i]->inode, 0, args.fileOff, args.ioLen, bufs[i]->ptr(), **memh)
+                        ? ioExec.addRead(i,
+                                         inodes[i]->inode,
+                                         inodes[i]->getKnownLength(),
+                                         0,
+                                         args.fileOff,
+                                         args.ioLen,
+                                         bufs[i]->ptr(),
+                                         **memh)
                         : ioExec.addWrite(i, inodes[i]->inode, 0, args.fileOff, args.ioLen, bufs[i]->ptr(), **memh);
       if (!addRes) {
         res[i] = -static_cast<ssize_t>(addRes.error().code());

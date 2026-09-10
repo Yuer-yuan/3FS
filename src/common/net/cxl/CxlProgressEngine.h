@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -18,6 +19,31 @@ struct CxlPollConfig {
   Duration spin{std::chrono::microseconds(20)};
   uint32_t yields{8};
   Duration sleep{std::chrono::microseconds(10)};
+  bool adaptive{true};
+  Duration idleSleepMin{std::chrono::microseconds(1)};
+  Duration idleSleepMax{std::chrono::microseconds(50)};
+};
+
+class CxlIdleBackoff {
+ public:
+  CxlIdleBackoff(Duration minimum, Duration maximum)
+      : minimum_(minimum > Duration::zero() ? minimum : Duration{std::chrono::nanoseconds(1)}),
+        maximum_(maximum > minimum_ ? maximum : minimum_) {}
+
+  Duration next(bool progressed) noexcept {
+    if (progressed) {
+      current_ = minimum_;
+      return current_;
+    }
+    const auto result = current_ > Duration::zero() ? current_ : minimum_;
+    current_ = std::min(result * 2, maximum_);
+    return result;
+  }
+
+ private:
+  Duration minimum_;
+  Duration maximum_;
+  Duration current_{};
 };
 
 class CxlProgressEngine {
@@ -38,7 +64,7 @@ class CxlProgressEngine {
 
  private:
   void loop();
-  void scanOnce() noexcept;
+  bool scanOnce() noexcept;
 
   CxlPollConfig config_;
   std::shared_ptr<CxlMetrics> metrics_;

@@ -37,6 +37,47 @@ class FdbProbeContractTest(unittest.TestCase):
         self.assertGreaterEqual(source.count("waitFuture("), 3)
         self.assertIn("fdb_future_destroy", source)
 
+    def test_probe_exercises_bounded_snapshot_callback_delivery(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        for symbol in (
+            "fdb_future_set_callback",
+            "futureReady",
+            "std::condition_variable",
+            "std::chrono::seconds(35)",
+            "callback_called",
+            "callback_elapsed_ms",
+        ):
+            with self.subTest(symbol=symbol):
+                self.assertIn(symbol, source)
+        self.assertIn("fdb_future_cancel", source)
+
+    def test_probe_exercises_the_3fs_fdb_coroutine_bridge(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        for symbol in (
+            '"fdb/FDB.h"',
+            "folly::coro::blockingWait",
+            "hf3fs::kv::fdb::DB",
+            "hf3fs::kv::fdb::Transaction",
+            "wrapper_get_ok",
+            "wrapper_value_match",
+            "wrapper_elapsed_ms",
+        ):
+            with self.subTest(symbol=symbol):
+                self.assertIn(symbol, source)
+
+    def test_fdb_coroutine_bridge_has_opt_in_bounded_timing_trace(self):
+        source = (PROJECT_ROOT / "src/fdb/FDB.cc").read_text(encoding="utf-8")
+        for symbol in (
+            "HF3FS_FDB_FUTURE_TRACE",
+            "context.sequence <= 4096",
+            '"fdb_registered"',
+            '"fdb_callback"',
+            '"fdb_resumed"',
+            "elapsed_us",
+        ):
+            with self.subTest(symbol=symbol):
+                self.assertIn(symbol, source)
+
 
 if __name__ == "__main__":
     unittest.main()

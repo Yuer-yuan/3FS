@@ -1,4 +1,5 @@
 #include "common/net/cxl/CxlFabric.h"
+#include "common/net/RpcTrace.h"
 
 #include <algorithm>
 #include <atomic>
@@ -333,6 +334,7 @@ Result<Void> CxlFabric::publishLifecycle(CxlFabricLifecycle lifecycle) {
 
 Result<Void> CxlFabric::waitForPeerRetirement() {
   const auto deadline = std::chrono::steady_clock::now() + config_.shutdownTimeout;
+  uint32_t lastBlockedEndpoint = 0;
   while (std::chrono::steady_clock::now() < deadline) {
     bool allRetired = true;
     const auto participantCount = activeEndpoints_.empty() ? config_.manifest.endpointCount : activeEndpoints_.size();
@@ -344,6 +346,14 @@ Result<Void> CxlFabric::waitForPeerRetirement() {
       }
       auto peer = endpointState_->snapshot(endpoint);
       if (!peer || static_cast<CxlEndpointLifecycle>(loadLe32(&peer->lifecycle)) != CxlEndpointLifecycle::Retired) {
+        if (RpcTrace::enabled() && endpoint.value != lastBlockedEndpoint) {
+          lastBlockedEndpoint = endpoint.value;
+          rpcTrace(0, 0, 0, "retirement_wait", peer ? 0 : peer.error().code(),
+                   fmt::format("endpoint={} generation={} lifecycle={} heartbeat={}", endpoint.value,
+                               peer ? loadLe64(&peer->endpointGeneration) : 0,
+                               peer ? loadLe32(&peer->lifecycle) : 0,
+                               peer ? loadLe64(&peer->heartbeat) : 0));
+        }
         allRetired = false;
         break;
       }

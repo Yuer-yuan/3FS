@@ -18,8 +18,11 @@ endfunction()
 function(CheckGitRead git_hash)
     if (EXISTS ${POST_BUILD_DIR}/git-state.txt)
         file(STRINGS ${POST_BUILD_DIR}/git-state.txt CONTENT)
-        LIST(GET CONTENT 0 var)
-        set(${git_hash} ${var} PARENT_SCOPE)
+        list(LENGTH CONTENT CONTENT_LENGTH)
+        if (CONTENT_LENGTH GREATER 0)
+            LIST(GET CONTENT 0 var)
+            set(${git_hash} ${var} PARENT_SCOPE)
+        endif ()
     endif ()
 endfunction()
 
@@ -30,19 +33,27 @@ function(CheckGitVersion)
             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
             OUTPUT_VARIABLE BUILD_COMMIT_HASH_SHORT
             OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
     )
     execute_process(
             COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
             OUTPUT_VARIABLE BUILD_COMMIT_HASH_FULL
             OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
     )
     execute_process(
             COMMAND ${GIT_EXECUTABLE} log -1 --format=%at --date=local
             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
             OUTPUT_VARIABLE BUILD_TIMESTAMP
             OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
     )
+    if (BUILD_COMMIT_HASH_FULL STREQUAL "")
+        set(BUILD_COMMIT_HASH_SHORT "00000000")
+        set(BUILD_COMMIT_HASH_FULL "0000000000000000000000000000000000000000")
+        set(BUILD_TIMESTAMP "0")
+    endif ()
     execute_process(
             COMMAND date -d @${BUILD_TIMESTAMP} +%Y%m%d
             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
@@ -92,7 +103,7 @@ function(CheckGitVersion)
 
     # Only update the git_version.cpp if the hash has changed. This will
     # prevent us from rebuilding the project more than we need to.
-    if (NOT ${BUILD_COMMIT_HASH_FULL} STREQUAL ${GIT_HASH_CACHE} OR NOT EXISTS ${POST_CONFIGURE_FILE})
+    if (NOT "${BUILD_COMMIT_HASH_FULL}" STREQUAL "${GIT_HASH_CACHE}" OR NOT EXISTS ${POST_CONFIGURE_FILE})
         # Set che GIT_HASH_CACHE variable the next build won't have
         # to regenerate the source file.
         CheckGitWrite("${BUILD_COMMIT_HASH_FULL}")

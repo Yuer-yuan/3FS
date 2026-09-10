@@ -23,6 +23,7 @@
 #include "common/net/TransportEvidence.h"
 #include "common/net/TransportRuntime.h"
 #include "common/net/Waiter.h"
+#include "common/net/RpcTrace.h"
 #include "common/net/WriteItem.h"
 #include "common/net/cxl/CxlConnectService.h"
 #include "common/net/cxl/CxlSocket.h"
@@ -255,7 +256,9 @@ Result<Void> Transport::check() {
 
 void Transport::completePublication(size_t uuid) {
   if (publicationLedger_) {
-    (void)publicationLedger_->complete(uuid);
+    auto completed = publicationLedger_->complete(uuid);
+    if (RpcTrace::enabled()) rpcTrace(0, 0, uuid, "publication_complete",
+                                     completed ? 0 : completed.error().code(), describe());
   }
 }
 
@@ -392,6 +395,7 @@ void Transport::doRead(bool error, bool logError /* = true */) {
   while (true) {
     auto result = socket_->recv(folly::MutableByteRange{readBuff_->writableTail(), readBuff_->tailroom()});
     if (UNLIKELY(result.hasError())) {
+      if (RpcTrace::enabled()) rpcTrace(0, 0, 0, "stream_receive_failed", result.error().code(), describe());
       XLOGF(WARNING, "transport {} receive failed: {}", describe(), result.error());
       return tryToCleanUp(false);
     }
@@ -521,6 +525,7 @@ Transport::Action Transport::writeAll() {
     uint32_t len = inWritingList_.toIOVec(iov, kMaxBatchSize, expectedWriteSize);
     auto result = socket_->send(iov, len);
     if (result.hasError()) {
+      if (RpcTrace::enabled()) rpcTrace(0, 0, 0, "stream_send_failed", result.error().code(), describe());
       return Action::Fail;
     }
 
@@ -580,6 +585,8 @@ void Transport::initializePublicationLedger() {
   auto snapshot = socket_->publicationSnapshot();
   if (snapshot && snapshot->trustworthy) {
     publicationLedger_ = std::make_unique<PublicationLedger>(snapshot->laneGeneration, snapshot->acceptedOffset);
+    if (RpcTrace::enabled()) rpcTrace(0, 0, 0, "publication_ledger_bound", 0,
+        fmt::format("{} ledger={}", describe(), fmt::ptr(publicationLedger_.get())));
   }
 }
 
@@ -606,6 +613,10 @@ WriteList Transport::retirePublication() {
 
   WriteList retry;
   for (auto &resolution : publicationLedger_->retire(snapshot)) {
+    if (RpcTrace::enabled()) rpcTrace(0, 0, resolution.uuid, "publication_retired", 0,
+        fmt::format("{} begin={} end={} disposition={} lifetime_refs={}", describe(),
+                    resolution.range.beginOffset, resolution.range.endOffset,
+                    static_cast<unsigned>(resolution.disposition), resolution.requestLifetime.use_count()));
     if (resolution.disposition == CompletionDisposition::RejectedBeforeExecute && resolution.retryable) {
       resolution.retryable->publication.reset();
       retry.concat(WriteList(std::move(resolution.retryable)));

@@ -1,6 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include "common/net/RpcTrace.h"
 #include <folly/executors/CPUThreadPoolExecutor.h>
 #include <folly/experimental/coro/ViaIfAsync.h>
 #include <limits>
@@ -54,8 +57,32 @@ class Processor {
       XLOGF(WARN, "Too many processing requests: {}, unpack message in current thread.", num);
       unpackMsg(wrapper, tr);
     } else {
-      executor_.pickNext().add(
-          [this, wrapper = std::move(wrapper), tr = std::move(tr)]() mutable { unpackMsg(wrapper, tr); });
+      const auto queuedAt = std::chrono::steady_clock::now();
+      const auto dispatch = dispatchSequence_.fetch_add(1, std::memory_order_relaxed);
+      if (UNLIKELY(rpcTraceEnabled() && tr->kind() == TransportKind::CXL)) {
+        XLOGF(INFO,
+              "HF3FS_RPC_PROCESSOR_DISPATCH stage=queued sequence={} transport={} bytes={}",
+              dispatch,
+              tr->describe(),
+              wrapper.length());
+      }
+      executor_.pickNext().add([this, wrapper = std::move(wrapper), tr = std::move(tr), queuedAt, dispatch]() mutable {
+        const auto queueElapsed = std::chrono::steady_clock::now() - queuedAt;
+        if (UNLIKELY(rpcTraceEnabled() && tr->kind() == TransportKind::CXL)) {
+          XLOGF(INFO,
+                "HF3FS_RPC_PROCESSOR_DISPATCH stage=started sequence={} transport={} elapsed_ms={}",
+                dispatch,
+                tr->describe(),
+                std::chrono::duration_cast<std::chrono::milliseconds>(queueElapsed).count());
+        }
+        if (UNLIKELY(rpcTraceEnabled() && queueElapsed >= std::chrono::seconds(1))) {
+          XLOGF(WARN,
+                "HF3FS_RPC_PROCESSOR_QUEUE transport={} elapsed_ms={}",
+                tr->describe(),
+                std::chrono::duration_cast<std::chrono::milliseconds>(queueElapsed).count());
+        }
+        unpackMsg(wrapper, tr);
+      });
     }
   }
 
@@ -151,13 +178,54 @@ class Processor {
     if (packet.flags & serde::EssentialFlags::IsReq) {
       // is request.
       XLOGF(DBG, "receive request {}:{}", packet.serviceId, packet.methodId);
+      if (traceMeta(packet)) rpcTrace(packet.serviceId, packet.methodId, packet.uuid, "server_received", 0,
+                                     fmt::format("{} bytes={} checksum={}", tr->describe(), wireBytes, checksumIn));
       tryToProcessSerdeRequest(std::move(buf), packet, std::move(tr));
     } else {
       // is response.
       XLOGF(DBG, "receive response {}:{}", packet.serviceId, packet.methodId);
+      if (traceMeta(packet)) rpcTrace(packet.serviceId, packet.methodId, packet.uuid, "client_response_unpacked", 0,
+                                     fmt::format("{} bytes={} checksum={}", tr->describe(), wireBytes, checksumIn));
       tr->completePublication(packet.uuid);
-      Waiter::instance().post(packet, std::move(buf));
+      const bool posted = Waiter::instance().post(packet, std::move(buf));
+      if (traceMeta(packet)) rpcTrace(packet.serviceId, packet.methodId, packet.uuid,
+                                     posted ? "waiter_posted" : "waiter_not_found", 0, tr->describe());
+      if (UNLIKELY(!posted)) {
+        if (packet.timestamp) {
+          XLOGF(WARN,
+                "HF3FS_RPC_LATE_RESPONSE uuid={} service={} method={} transport={} "
+                "server_received={} server_waked={} server_processed={} server_serialized={} client_received={}",
+                packet.uuid,
+                packet.serviceId,
+                packet.methodId,
+                static_cast<unsigned>(tr->kind()),
+                packet.timestamp->serverReceived,
+                packet.timestamp->serverWaked,
+                packet.timestamp->serverProcessed,
+                packet.timestamp->serverSerialized,
+                packet.timestamp->clientReceived);
+        } else {
+          XLOGF(WARN,
+                "HF3FS_RPC_LATE_RESPONSE uuid={} service={} method={} transport={} timestamps=absent",
+                packet.uuid,
+                packet.serviceId,
+                packet.methodId,
+                static_cast<unsigned>(tr->kind()));
+        }
+      }
     }
+  }
+
+  static bool rpcTraceEnabled() {
+    static const bool enabled = [] {
+      const char *value = std::getenv("HF3FS_RPC_TRACE");
+      return value != nullptr && value[0] != '\0' && std::string_view(value) != "0";
+    }();
+    return enabled;
+  }
+
+  static bool traceMeta(const serde::MessagePacket<> &packet) {
+    return tracedRpc(packet.serviceId, packet.methodId);
   }
 
   CoTask<void> processSerdeRequest(IOBufPtr buf, serde::MessagePacket<> packet, TransportPtr tr) {
@@ -229,6 +297,7 @@ class Processor {
   constexpr static size_t kFrozenData = 4;
   constexpr static size_t kCountInc = 8;
   std::atomic<size_t> flags_{0};
+  std::atomic<uint64_t> dispatchSequence_{0};
 };
 
 }  // namespace hf3fs::net

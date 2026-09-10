@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <fcntl.h>
 #include <folly/experimental/coro/BlockingWait.h>
+#include <folly/executors/ManualExecutor.h>
 #include <gtest/gtest.h>
 #include <stdexcept>
 #include <string>
@@ -189,6 +190,134 @@ class TestCxlBufferPublication : public TestCxlBuffer {
     }
   }
 };
+
+TEST_F(TestCxlBufferPublication, BulkCopyLeavesRpcExecutorAvailable) {
+  folly::ManualExecutor rpcExecutor;
+  folly::ManualExecutor copyExecutor;
+  CxlBulkTransfer transfer(peer_, folly::getKeepAliveToken(&copyExecutor));
+  auto remote = arena_->tryAllocate(8);
+  auto local = SharedBuffer::allocateHeap(8);
+  ASSERT_OK(remote);
+  ASSERT_OK(local);
+  std::fill_n(remote->data(), 8, uint8_t{0x5a});
+  std::fill_n(local->data(), 8, uint8_t{0xa5});
+  auto lease = remote->exportRemote(RemoteAccess::Read);
+  ASSERT_OK(lease);
+  std::array<SharedBuffer, 1> buffers{*local};
+  auto future = transfer.pull(lease->handle(), buffers).scheduleOn(&rpcExecutor).start();
+  bool healthCheckCompleted = false;
+  rpcExecutor.add([&] { healthCheckCompleted = true; });
+  rpcExecutor.drain();
+  EXPECT_TRUE(healthCheckCompleted);
+  EXPECT_FALSE(future.isReady());
+  EXPECT_EQ(local->data()[0], uint8_t{0xa5});
+  copyExecutor.drain();
+  rpcExecutor.drain();
+  ASSERT_TRUE(future.isReady());
+  ASSERT_OK(std::move(future).get());
+  EXPECT_EQ(local->data()[0], uint8_t{0x5a});
+}
+
+TEST_F(TestCxlBufferPublication, CancellationKeepsQueuedCopyAndLocalOwnerAlive) {
+  for (bool push : {false, true}) {
+    for (bool cancelBeforeCopy : {false, true}) {
+      folly::ManualExecutor rpcExecutor;
+      folly::ManualExecutor copyExecutor;
+      auto transfer = std::make_unique<CxlBulkTransfer>(peer_, folly::getKeepAliveToken(&copyExecutor));
+      auto remote = arena_->tryAllocate(8);
+      ASSERT_OK(remote);
+      std::fill_n(remote->data(), 8, uint8_t{0x5a});
+      auto lease = remote->exportRemote(push ? RemoteAccess::Write : RemoteAccess::Read);
+      ASSERT_OK(lease);
+      auto owner = std::make_shared<std::array<uint8_t, 8>>();
+      owner->fill(0xa5);
+      std::weak_ptr<std::array<uint8_t, 8>> weakOwner = owner;
+      auto local = SharedBuffer::fromStorage(owner->data(), owner->size(), 0, owner);
+      ASSERT_OK(local);
+      std::vector<SharedBuffer> buffers{*local};
+      folly::CancellationSource cancellation;
+      auto task = push ? transfer->push(lease->handle(), buffers) : transfer->pull(lease->handle(), buffers);
+      auto future = folly::coro::co_withCancellation(cancellation.getToken(), std::move(task))
+                        .scheduleOn(&rpcExecutor).start();
+      rpcExecutor.drain();
+      EXPECT_FALSE(future.isReady());
+      // The queued operation owns the local storage and mapping independently
+      // of the transfer object and of the caller's span/container.
+      buffers.clear();
+      *local = SharedBuffer{};
+      owner.reset();
+      transfer.reset();
+      if (cancelBeforeCopy) {
+        cancellation.requestCancellation();
+        rpcExecutor.drain();
+        EXPECT_FALSE(future.isReady());
+        EXPECT_FALSE(weakOwner.expired());
+      }
+      copyExecutor.drain();
+      if (!cancelBeforeCopy) {
+        cancellation.requestCancellation();
+      }
+      rpcExecutor.drain();
+      ASSERT_TRUE(future.isReady());
+      ASSERT_OK(std::move(future).get());
+      EXPECT_TRUE(weakOwner.expired());
+      EXPECT_EQ(remote->data()[0], push ? uint8_t{0xa5} : uint8_t{0x5a});
+    }
+  }
+}
+
+TEST_F(TestCxlBufferPublication, QueuedCopyRejectsStoppedFabric) {
+  folly::ManualExecutor rpcExecutor;
+  folly::ManualExecutor copyExecutor;
+  CxlBulkTransfer transfer(peer_, folly::getKeepAliveToken(&copyExecutor));
+  auto remote = arena_->tryAllocate(8);
+  auto local = SharedBuffer::allocateHeap(8);
+  ASSERT_OK(remote);
+  ASSERT_OK(local);
+  std::fill_n(local->data(), 8, uint8_t{0xa5});
+  auto lease = remote->exportRemote(RemoteAccess::Read);
+  ASSERT_OK(lease);
+  std::array<SharedBuffer, 1> buffers{*local};
+  auto future = transfer.pull(lease->handle(), buffers).scheduleOn(&rpcExecutor).start();
+  rpcExecutor.drain();
+  EXPECT_TRUE(peer_->stopAndJoin());
+  copyExecutor.drain();
+  rpcExecutor.drain();
+  ASSERT_TRUE(future.isReady());
+  ASSERT_ERROR(std::move(future).get(), RPCCode::kDataPlaneNotInitialized);
+  EXPECT_EQ(local->data()[0], uint8_t{0xa5});
+}
+
+TEST_F(TestCxlBufferPublication, QueuedCopyRevalidatesAllocationGeneration) {
+  folly::ManualExecutor rpcExecutor;
+  folly::ManualExecutor copyExecutor;
+  CxlBulkTransfer transfer(peer_, folly::getKeepAliveToken(&copyExecutor));
+  auto remote = arena_->tryAllocate(8);
+  auto local = SharedBuffer::allocateHeap(8);
+  ASSERT_OK(remote);
+  ASSERT_OK(local);
+  std::fill_n(local->data(), 8, uint8_t{0xa5});
+  auto exported = remote->exportRemote(RemoteAccess::Read);
+  ASSERT_OK(exported);
+  const auto handle = exported->handle();
+  auto lease = exported->takeLease();
+  std::array<SharedBuffer, 1> buffers{*local};
+  auto future = transfer.pull(handle, buffers).scheduleOn(&rpcExecutor).start();
+  rpcExecutor.drain();
+  *remote = SharedBuffer{};
+  lease.reset();
+  auto replacement = arena_->tryAllocate(8);
+  ASSERT_OK(replacement);
+  auto replacementExport = replacement->exportRemote(RemoteAccess::Read);
+  ASSERT_OK(replacementExport);
+  EXPECT_EQ(handle.allocationSlot, replacementExport->handle().allocationSlot);
+  EXPECT_NE(handle.allocationGeneration, replacementExport->handle().allocationGeneration);
+  copyExecutor.drain();
+  rpcExecutor.drain();
+  ASSERT_TRUE(future.isReady());
+  ASSERT_ERROR(std::move(future).get(), RPCCode::kStaleGeneration);
+  EXPECT_EQ(local->data()[0], uint8_t{0xa5});
+}
 
 TEST_F(TestCxlBufferPublication, PendingOwnerPublicationCopiesNothingAndCanBeRetried) {
   auto remote = arena_->tryAllocate(8);

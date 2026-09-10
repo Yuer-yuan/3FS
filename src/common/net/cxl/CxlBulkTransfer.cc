@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstring>
 #include <limits>
+#include <folly/executors/GlobalExecutor.h>
 
 #include "common/net/cxl/CxlBuffer.h"
 #include "common/net/TransportEvidence.h"
@@ -24,32 +25,52 @@ Result<uint64_t> aggregateLength(std::span<SharedBuffer> buffers) {
 }  // namespace
 
 CoTryTask<void> CxlBulkTransfer::pull(const RemoteBufferHandle &remote, std::span<SharedBuffer> local) {
-  auto mapped = validateAndMap(remote, local, Direction::Pull);
-  if (!mapped) {
-    co_return makeError(std::move(mapped.error()));
-  }
-  std::atomic_thread_fence(std::memory_order_acquire);
-  size_t remoteOffset = 0;
-  for (auto &buffer : local) {
-    std::memmove(buffer.data(), mapped->data() + remoteOffset, buffer.size());
-    remoteOffset += buffer.size();
-  }
-  TransportEvidence::process().add(TransportEvidence::CxlBulkReadBytes, remoteOffset);
-  co_return Void{};
+  // Simulated CXL memory accesses can block for seconds. Keep the RPC executor
+  // available for completions and retirement while the independent worker copies.
+  // A cancellation must not complete this await before the copy releases its
+  // buffers: the caller still owns the remote publication/lease until we return.
+  co_return co_await folly::coro::co_withCancellation(
+      folly::CancellationToken{},
+      copy(fabric_, remote, {local.begin(), local.end()}, Direction::Pull)
+          .scheduleOn(copyExecutor_ ? copyExecutor_ : folly::getGlobalCPUExecutor()));
 }
 
 CoTryTask<void> CxlBulkTransfer::push(const RemoteBufferHandle &remote, std::span<SharedBuffer> local) {
-  auto mapped = validateAndMap(remote, local, Direction::Push);
+  co_return co_await folly::coro::co_withCancellation(
+      folly::CancellationToken{},
+      copy(fabric_, remote, {local.begin(), local.end()}, Direction::Push)
+          .scheduleOn(copyExecutor_ ? copyExecutor_ : folly::getGlobalCPUExecutor()));
+}
+
+CoTryTask<void> CxlBulkTransfer::copy(std::shared_ptr<CxlFabric> fabric,
+                                   RemoteBufferHandle remote,
+                                   std::vector<SharedBuffer> local,
+                                   Direction direction) {
+  // Own the mapping and local buffers across dispatch. Validate after dispatch
+  // so a queued operation cannot use an identity that retired while it waited.
+  CxlBulkTransfer transfer(std::move(fabric));
+  auto mapped = transfer.validateAndMap(remote, local, direction);
   if (!mapped) {
     co_return makeError(std::move(mapped.error()));
   }
+  if (direction == Direction::Pull) {
+    std::atomic_thread_fence(std::memory_order_acquire);
+  }
   size_t remoteOffset = 0;
-  for (const auto &buffer : local) {
-    std::memmove(mapped->data() + remoteOffset, buffer.data(), buffer.size());
+  for (auto &buffer : local) {
+    if (direction == Direction::Pull) {
+      std::memmove(buffer.data(), mapped->data() + remoteOffset, buffer.size());
+    } else {
+      std::memmove(mapped->data() + remoteOffset, buffer.data(), buffer.size());
+    }
     remoteOffset += buffer.size();
   }
-  std::atomic_thread_fence(std::memory_order_release);
-  TransportEvidence::process().add(TransportEvidence::CxlBulkWriteBytes, remoteOffset);
+  if (direction == Direction::Push) {
+    std::atomic_thread_fence(std::memory_order_release);
+  }
+  TransportEvidence::process().add(
+      direction == Direction::Pull ? TransportEvidence::CxlBulkReadBytes : TransportEvidence::CxlBulkWriteBytes,
+      remoteOffset);
   co_return Void{};
 }
 

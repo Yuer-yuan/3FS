@@ -27,6 +27,7 @@ void BulkTransmissionLimiter::signal(Duration latency) {
 }
 
 CoTryTask<BulkTransmissionRsp> BulkControlImpl::apply(serde::CallContext &ctx, const BulkTransmissionReq &req) {
+  static_cast<void>(ctx);
   auto startTime = RelativeTime::now();
   co_await limiter_->co_wait();
   transmissionWaitLatency.addSample(RelativeTime::now() - startTime);

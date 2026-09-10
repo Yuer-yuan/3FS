@@ -8,10 +8,12 @@
 
 #include <inttypes.h>
 
+#ifndef _LINUX_OPENAT2_H
 struct open_how {
 	uint64_t	flags;
 	uint64_t	mode;
 	uint64_t	resolve;
 };
+#endif
 
 #endif

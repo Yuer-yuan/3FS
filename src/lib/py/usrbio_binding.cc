@@ -135,7 +135,7 @@ PYBIND11_MODULE(hf3fs_py_usrbio, m) {
              auto size = bufInfo.itemsize * (uint64_t)bufInfo.size;
              auto ptr = (uint8_t *)bufInfo.ptr;
 
-             auto res = hf3fs_iovwrap(iov.get(), ptr, uuid.data, hf3fs_mount_point, size, block_size, numa);
+             auto res = hf3fs_iovwrap(iov.get(), ptr, uuid.bytes(), hf3fs_mount_point, size, block_size, numa);
              if (res < 0) {
                throw OSException{-res};
              }

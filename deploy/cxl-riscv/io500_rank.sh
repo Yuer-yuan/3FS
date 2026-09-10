@@ -3,6 +3,7 @@ set -eu
 unset LD_PRELOAD
 export LD_LIBRARY_PATH=/opt/io500/lib
 rank=${PMI_RANK:?missing MPI rank}
+export HF3FS_IO500_RANK=$rank
 guest=$(cat /opt/io500/etc/guest-id)
 test "$rank" -eq "$((guest - 1))"
 test "$(hostname)" = "client$rank"

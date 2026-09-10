@@ -50,12 +50,13 @@ def passing_result():
                                                                 system_monitor_interval=30,
                                                                 worker_logging_interval=30,
                                                                 storage_logging_delay=30,
-                                                                run_loop_profiling_interval=0)),
+                                                                run_loop_profiling_interval=0,
+                                                                tsc_yield_time=100_000_000)),
         applications=dict(status='passed', clean_retirement=True, ready=list(full_stack.APPLICATIONS),
                           cpu_affinity={stage: [dict(role=role, pid=pid, threads=threads, cpus=cpus, checked=True)
-                              for role, pid, threads, cpus in [('fdbserver', 108, 5, '0'), ('cxl-fabricd', 120, 3, '1-3'),
-                                  ('mgmtd_main', 130, 28, '1-3'), ('meta_main', 140, 57, '1-2'),
-                                  ('storage_main', 150, 233, '2-3')]]
+                              for role, pid, threads, cpus in [('fdbserver', 108, 5, '0'), ('cxl-fabricd', 120, 3, '3'),
+                                  ('mgmtd_main', 130, 28, '1'), ('meta_main', 140, 57, '2-3'),
+                                  ('storage_main', 150, 233, '3')]]
                               for stage in ('before_io', 'after_io')},
                           clients=clients, transport_records=records, region_offset=full_stack.REGION_OFFSET,
                           region_length=phase1.REGION_LENGTH),
@@ -76,7 +77,8 @@ class Phase1EvidenceTest(unittest.TestCase):
                 build_manifest_sha256=old_build, source_closure_sha256=old_source,
                 platform_contract_sha256=contract_sha,
                 platform_artifacts={'qemu': {'sha256': platform_sha}},
-                binaries={'storage_main': {'sha256': binary_sha}},
+                binaries={'storage_main': {'sha256': binary_sha},
+                          'io500/bin/io500-linebuf': {'sha256': 'a' * 64}},
             )
             result_path.write_text(json.dumps(result))
             handoff = dict(
@@ -88,13 +90,14 @@ class Phase1EvidenceTest(unittest.TestCase):
             handoff_path.write_text(json.dumps(handoff))
             rootfs = dict(
                 build_manifest_sha256=current_build, source_closure_sha256=current_source,
-                binaries={'storage_main': {'sha256': binary_sha}},
+                binaries={'storage_main': {'sha256': binary_sha},
+                          'io500/bin/io500-linebuf': {'sha256': 'b' * 64}},
             )
             artifacts = {'qemu': {'sha256': platform_sha}}
             with patch.object(g0, 'validate_result', return_value=[]):
                 verified = phase1.verify_reference(handoff_path, rootfs, artifacts)
                 self.assertTrue(verified['verified'])
-                self.assertEqual(verified['compatibility'], 'exact-platform-and-staged-binary-hashes')
+                self.assertEqual(verified['compatibility'], 'exact-platform-and-staged-3fs-binary-hashes')
                 self.assertEqual(verified['build_manifest_sha256'], current_build)
                 self.assertEqual(verified['source_closure_sha256'], current_source)
                 self.assertEqual(verified['g0_build_manifest_sha256'], old_build)
@@ -157,7 +160,7 @@ class Phase1EvidenceTest(unittest.TestCase):
         self.assertNotIn('--knob-trace_flush_interval', command)
         self.assertNotIn('--knob-min_trace_severity', command)
         for knob in ('system_monitor_interval', 'worker_logging_interval',
-                     'storage_logging_delay', 'run_loop_profiling_interval'):
+                     'storage_logging_delay', 'run_loop_profiling_interval', 'tsc_yield_time'):
             result = passing_result()
             result['fdb']['server_knobs'].pop(knob)
             self.assertIn('FoundationDB simulation budget is absent or changed', phase1.validate_phase1_result(result))
@@ -236,7 +239,7 @@ class Phase1EvidenceTest(unittest.TestCase):
                     config = tomllib.loads(path.read_text())
                     if 'cxl' in config:
                         self.assertEqual(config['cxl']['region_length'], '2046MB')
-                        self.assertEqual(config['cxl']['poll_sleep'], '1ms')
+                        self.assertEqual(config['cxl']['poll_sleep'], '10ms')
                 mgmtd = tomllib.loads((directory / 'mgmtd_main.toml').read_text())
                 self.assertEqual(mgmtd['server']['service']['lease_length'], '43200s')
                 self.assertEqual(mgmtd['server']['service']['heartbeat_timestamp_valid_window'], '43200s')
@@ -247,6 +250,11 @@ class Phase1EvidenceTest(unittest.TestCase):
                     self.assertEqual(config['cxl']['endpoint'], 15 + node)
                     self.assertEqual(config['client']['default_timeout'], '120s')
                     self.assertEqual(config['client']['thread_pool']['num_io_threads'], 1)
+                    self.assertFalse(config['client']['io_worker']['read_write_data_in_event_thread'])
+                fuse = tomllib.loads((directory / 'hf3fs_fuse_main.toml').read_text())
+                self.assertEqual(fuse['client']['thread_pool']['num_proc_threads'], 2)
+                self.assertEqual(fuse['client']['thread_pool']['num_io_threads'], 2)
+                self.assertTrue(fuse['client']['io_worker']['read_write_data_in_event_thread'])
             storage = tomllib.loads((directory / 'storage_main.toml').read_text())
             self.assertEqual(storage['server']['base']['thread_pool']['num_io_threads'], 10)
             self.assertEqual(storage['server']['base']['thread_pool']['num_proc_threads'], 10)

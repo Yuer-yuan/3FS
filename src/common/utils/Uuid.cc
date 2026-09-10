@@ -5,7 +5,7 @@
 #include "common/utils/RobinHood.h"
 
 size_t std::hash<hf3fs::Uuid>::operator()(const hf3fs::Uuid &uuid) const {
-  return robin_hood::hash_bytes(uuid.data, uuid.static_size());
+  return robin_hood::hash_bytes(uuid.bytes(), uuid.static_size());
 }
 
 namespace hf3fs {

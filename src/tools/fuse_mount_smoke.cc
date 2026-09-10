@@ -192,7 +192,36 @@ int run(const std::filesystem::path &mountpoint, const char *program) {
 
 }  // namespace
 
+// Named diagnostic workload, never a qualification/standard substitute.
+int diagnosticIo(std::string_view action, const char *path) {
+  struct stat attributes {};
+  int code = 0;
+  if (action == "stat-existing") {
+    if (::stat(path, &attributes)) code = errno;
+    else if (!S_ISDIR(attributes.st_mode)) code = ENOTDIR;
+  } else if (action == "stat-missing") {
+    if (::stat(path, &attributes) == 0) code = EEXIST;
+    else if (errno != ENOENT) code = errno;
+    else {
+      std::cout << "HF3FS_DIAGNOSTIC_EXPECTED errno=" << ENOENT << "\n";
+    }
+  } else if (action == "create-fsync-stat-unlink") {
+    int fd = ::open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (fd < 0) code = errno;
+    else {
+      if (::fsync(fd)) code = errno;
+      if (::close(fd) && !code) code = errno;
+      if (!code && ::stat(path, &attributes)) code = errno;
+      if (!code && (!S_ISREG(attributes.st_mode) || attributes.st_size != 0)) code = EIO;
+      if (!code && ::unlink(path)) code = errno;
+    }
+  } else return 64;
+  std::cout << "HF3FS_DIAGNOSTIC_IO action=" << action << " errno=" << code << "\n";
+  return code ? 1 : 0;
+}
+
 int main(int argc, char **argv) {
+  if (argc == 4 && std::string_view(argv[1]) == "--diagnostic") return diagnosticIo(argv[2], argv[3]);
   try {
     return run(parseMountpoint(argc, argv), argv[0]);
   } catch (const std::invalid_argument &error) {

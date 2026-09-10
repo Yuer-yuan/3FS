@@ -1,3 +1,4 @@
+#include "common/net/RpcTrace.h"
 #include "common/net/TransportRuntime.h"
 
 #include <algorithm>
@@ -136,6 +137,9 @@ Result<Void> TransportRuntime::startConfigured(const Config &config) {
               .spin = config.poll_spin(),
               .yields = config.poll_yields(),
               .sleep = config.poll_sleep(),
+              .adaptive = config.poll_adaptive(),
+              .idleSleepMin = config.poll_idle_sleep_min(),
+              .idleSleepMax = config.poll_idle_sleep_max(),
           },
       .authorityOwnerLock = config.authority_owner_lock(),
       .authorityReceipt = config.authority_receipt(),
@@ -293,7 +297,11 @@ Result<Void> TransportRuntime::stopCxl() {
     quarantinedLifetimes.clear();
     return Void{};
   }
+  if (RpcTrace::enabled()) rpcTrace(0, 0, 0, "runtime_stop_begin", 0,
+      fmt::format("endpoint={} generation={} references={}", fabric->config().endpoint.value,
+                  fabric->config().endpointGeneration, fabric.use_count()));
   auto stopped = fabric->stopAndJoin();
+  if (RpcTrace::enabled()) rpcTrace(0, 0, 0, "runtime_stop_end", stopped ? 0 : stopped.error().code());
   const auto &identity = fabric->config();
   std::string manifestHash;
   for (const auto byte : identity.manifest.manifestSha256) {

@@ -12,6 +12,7 @@ import re
 import shlex
 import time
 
+import full_stack
 import prepare_io500
 
 SCHEMA = 'hf3fs.cxl-io500-standard-10c1s.v1'
@@ -21,9 +22,15 @@ PHASES = ('ior-easy-write', 'mdtest-easy-write', 'ior-hard-write', 'mdtest-hard-
 ENV = 'LD_PRELOAD= LD_LIBRARY_PATH=/opt/io500/lib'
 BIN = '/opt/io500/bin'
 RESULT_DIR = '/mnt/3fs/io500-standard-results'
+BANNER_TIMEOUT_SECONDS = 300
 CLOCK_RE = re.compile(r'(?m)^HF3FS_IO500_CLOCK host=(\S+) realtime_ns=(\d+) monotonic_before_ns=(\d+) monotonic_after_ns=(\d+)\s*$')
 RANK_RE = re.compile(r'HF3FS_IO500_RANK rank=(\d+) guest=(\d+) host=([^\s]+) pid=(\d+) endpoint=(\d+)')
 PROBE_RE = re.compile(r'HF3FS_IO500_PROBE rank=(\d+) size=(\d+) host=([^\s]+) pid=(\d+) begin_ns=(\d+) end_ns=(\d+) monotonic_begin_ns=(\d+) monotonic_end_ns=(\d+)')
+HEARTBEAT_RE = re.compile(
+    r'HF3FS_IO500_HEARTBEAT rank=(\d+) pid=(\d+) elapsed_ms=(\d+) output_bytes=(\d+) '
+    r'state=(\S+) wchan=(\S+) utime_ticks=(\d+) stime_ticks=(\d+) voluntary_ctxt=(\d+) '
+    r'nonvoluntary_ctxt=(\d+) rchar=(\d+) wchar=(\d+) syscr=(\d+) syscw=(\d+) '
+    r'read_bytes=(\d+) write_bytes=(\d+)')
 
 
 def clean_console(text: str) -> str:
@@ -42,6 +49,7 @@ def stage_roots(roots: list[Path]) -> dict:
         (root / 'etc').mkdir(exist_ok=True)
         (root / 'etc/hosts').write_text(hosts)
         directory = root / 'opt/io500/etc'
+        directory.mkdir(parents=True, exist_ok=True)
         (directory / 'guest-id').write_text(str(node) + '\n')
         (directory / 'clients').write_text(''.join(f'10.73.0.{n + 2}:1\n' for n in range(1, 11)))
         files[node] = {relative: hashlib.sha256((root / relative).read_bytes()).hexdigest()
@@ -127,23 +135,53 @@ class PhaseWatchdog:
     def __init__(self):
         self.partial = ''
         self.window = None
+        self.started_ns = None
         self.banner_ns = None
         self.records = []
         self.failure = None
+        self.heartbeats = []
+        self.rank_receipts = []
+        self._rank_receipts = set()
+        self.last_progress_ns = None
+
+    @property
+    def current_phase(self) -> str | None:
+        return PHASES[len(self.records)] if len(self.records) < len(PHASES) else None
 
     def observe(self, chunk: str, now_ns: int) -> None:
+        if self.started_ns is None:
+            self.started_ns = now_ns
         lines = (self.partial + chunk).split('\n')
         self.partial = lines.pop()
         for line in lines:
+            heartbeat = HEARTBEAT_RE.search(line)
+            if heartbeat:
+                names = ('rank', 'pid', 'elapsed_ms', 'output_bytes', 'state', 'wchan',
+                         'utime_ticks', 'stime_ticks', 'voluntary_ctxt', 'nonvoluntary_ctxt',
+                         'rchar', 'wchar', 'syscr', 'syscw', 'read_bytes', 'write_bytes')
+                values = heartbeat.groups()
+                sample = {name: value if name in ('state', 'wchan') else int(value)
+                          for name, value in zip(names, values)}
+                sample.update(observed_ns=now_ns, phase=self.current_phase)
+                self.heartbeats.append(sample)
+                self.last_progress_ns = now_ns
+            rank = RANK_RE.search(line)
+            if rank and int(rank[1]) not in self._rank_receipts:
+                self._rank_receipts.add(int(rank[1]))
+                self.rank_receipts.append(dict(rank=int(rank[1]), guest=int(rank[2]), host=rank[3],
+                                               pid=int(rank[4]), endpoint=int(rank[5]),
+                                               observed_ns=now_ns))
+                self.last_progress_ns = now_ns
             if self.fatal.search(line):
                 self.failure = dict(line=line.strip(), observed_ns=now_ns,
-                                    phase=PHASES[len(self.records)] if len(self.records) < len(PHASES) else None,
+                                    phase=self.current_phase,
                                     completed_phases=len(self.records))
                 raise RuntimeError('fatal IO500 output: ' + line.strip())
             if '[INVALID]' in line:
                 raise ValueError('IO500 reported INVALID: ' + line.strip())
             if 'IO500 version ' in line and self.window is None:
                 self.window = self.banner_ns = now_ns
+                self.last_progress_ns = now_ns
             match = self.pattern.search(line)
             if not match:
                 continue
@@ -154,11 +192,60 @@ class PhaseWatchdog:
                 raise ValueError('duplicate or out-of-order phase: ' + name)
             host_seconds = (now_ns - self.window) / 1e9
             self.records.append(dict(name=name, seconds=seconds, observed_ns=now_ns, host_window_seconds=host_seconds))
+            self.last_progress_ns = now_ns
             if not math.isfinite(seconds) or not 0 < seconds <= 600 or not 0 <= host_seconds <= 600:
                 raise TimeoutError(f'IO500 phase {name} exceeded the standard time gate: reported={seconds}, host={host_seconds}')
             self.window = now_ns
+        if self.window is None and now_ns - self.started_ns > BANNER_TIMEOUT_SECONDS * 1e9:
+            raise TimeoutError(f'IO500 banner was not observed within {BANNER_TIMEOUT_SECONDS} seconds')
         if self.window is not None and len(self.records) < 13 and now_ns - self.window > 600e9:
             raise TimeoutError(f'IO500 phase window exceeded 600 seconds after {len(self.records)} completed phases')
+
+
+def capture_live_diagnostics(consoles: list, command, run: Path, phase: str) -> dict:
+    """Capture process and service state on every live guest before MPI cleanup."""
+    started = time.monotonic_ns()
+    snapshots = []
+
+    def capture(node: int) -> dict:
+        path = run / f'io500-live-{phase}-node{node}.log'
+        node_started = time.monotonic_ns()
+        sections = []
+        chunks = []
+        for name, diagnostic in full_stack.live_diagnostic_commands(node, phase):
+            section_started = time.monotonic_ns()
+            section = dict(name=name, command_bytes=len(diagnostic.encode()),
+                           host_start_ns=section_started, outcome='running')
+            captured = full_stack.diagnostics.capture(
+                getattr(command, 'diagnostic', command), node, diagnostic,
+                run / f'io500-live-{phase}-node{node}-{name}.log', timeout=60)
+            section.update(captured)
+            if captured['outcome'] == 'passed':
+                output = Path(captured['path']).read_text(errors='replace')
+                chunks.append(f'\nHF3FS_LIVE_SECTION {name}\n{output}')
+            else:
+                chunks.append(f"\nHF3FS_LIVE_SECTION {name}\n{captured['error']}\n")
+                sections.append(section)
+                break
+            sections.append(section)
+        path.write_text(''.join(chunks))
+        ended = time.monotonic_ns()
+        passed = len(sections) == len(full_stack.live_diagnostic_commands(node, phase)) and all(
+            section['outcome'] == 'passed' for section in sections)
+        snapshot = dict(guest=node, path=str(path), outcome='passed' if passed else 'failed',
+                        bytes=sum(section.get('bytes', 0) for section in sections), sections=sections,
+                        host_start_ns=node_started, host_end_ns=ended)
+        if not passed and sections:
+            snapshot.update(error_type=sections[-1].get('error_type'), error=sections[-1].get('error'))
+        return snapshot
+
+    with ThreadPoolExecutor(max_workers=len(consoles)) as pool:
+        snapshots.extend(pool.map(capture, range(len(consoles))))
+    ended = time.monotonic_ns()
+    for snapshot in snapshots:
+        snapshot['duration_ms'] = (snapshot['host_end_ns'] - snapshot['host_start_ns']) / 1e6
+    return dict(host_start_ns=started, host_end_ns=ended, duration_ms=(ended - started) / 1e6,
+                snapshots=snapshots)
 
 
 def parse_metrics(text: str) -> dict:
@@ -232,18 +319,25 @@ def launch(consoles: list, command, run: Path, phase: str, record: dict) -> str:
     try:
         command(1, f'/bin/busybox setsid {BIN}/io500-job {phase} mpi /bin/busybox env {launcher} '
                 f'</dev/null & hf3fs_mpi_{phase}=$!', 30)
+        entry['mpiexec_submitted_ns'] = time.monotonic_ns()
         owned.append((1, f'hf3fs_mpi_{phase}', 'mpi'))
         coordinator.wait('HYDRA_LAUNCH_END', 120, since=start)
+        entry['hydra_launch_end_ns'] = time.monotonic_ns()
         proxies = parse_proxy_commands(coordinator.output[start:])
         entry['proxy_commands'] = proxies
+        entry['proxy_submissions'] = []
         for index, argv in enumerate(proxies):
             node = index + 1
             # shlex.join prevents Hydra argv from being interpreted as shell code.
             proxy = f'{ENV} {shlex.join(argv)}'
             command(node, f'/bin/busybox setsid {BIN}/io500-job {phase} {index} /bin/busybox env {proxy} '
                     f'</dev/null & hf3fs_proxy_{phase}=$!', 30)
+            entry['proxy_submissions'].append(dict(proxy=index, guest=node,
+                                                   submitted_ns=time.monotonic_ns()))
             owned.append((node, f'hf3fs_proxy_{phase}', str(index)))
         offset = start
+        wait_started_ns = time.monotonic_ns()
+        entry['wait_started_ns'] = wait_started_ns
         deadline = time.monotonic() + (13 * 600 + 120 if watchdog else 180)
         pattern = re.compile(re.escape(marker) + r'(\d+)')
         while True:
@@ -253,8 +347,16 @@ def launch(consoles: list, command, run: Path, phase: str, record: dict) -> str:
                 chunk = output[offset:]
                 offset = len(output)
             if watchdog:
+                # Use the launch loop's own monotonic epoch. This does not
+                # depend on receiving another complete output line.
+                if watchdog.banner_ns is None and now - wait_started_ns >= BANNER_TIMEOUT_SECONDS * 10**9:
+                    raise TimeoutError(
+                        f'IO500 banner was not observed within {BANNER_TIMEOUT_SECONDS} seconds')
                 watchdog.observe(chunk, now)
-                entry.update(banner_observed_ns=watchdog.banner_ns, phases=watchdog.records)
+                entry.update(banner_observed_ns=watchdog.banner_ns, phases=watchdog.records,
+                             current_phase=watchdog.current_phase, heartbeats=watchdog.heartbeats,
+                             rank_receipts=watchdog.rank_receipts,
+                             last_progress_ns=watchdog.last_progress_ns)
             (run / 'io500-workload.json').write_text(json.dumps(record, indent=2) + '\n')
             match = pattern.search(output, start)
             if match:
@@ -283,6 +385,11 @@ def launch(consoles: list, command, run: Path, phase: str, record: dict) -> str:
             raise ValueError('Hydra proxy exit is nonzero')
         entry['clean_exit'] = True
         return coordinator.output[start:]
+    except Exception as error:
+        entry.update(outcome='failed', error_type=type(error).__name__, error=str(error))
+        if phase == 'standard':
+            entry['live_diagnostics'] = capture_live_diagnostics(consoles, command, run, phase)
+        raise
     finally:
         # Preserve the failed workload's output before cleanup can add signals
         # or shutdown diagnostics to the same serial console.
@@ -321,6 +428,8 @@ def launch(consoles: list, command, run: Path, phase: str, record: dict) -> str:
             for node, variable, index in reversed(owned):
                 command(node, f'wait ${variable}', 30)
         entry.setdefault('host_end_ns', time.monotonic_ns())
+        entry['duration_ms'] = (entry['host_end_ns'] - entry['host_start_ns']) / 1e6
+        entry.setdefault('outcome', 'passed' if entry.get('clean_exit') else 'failed')
         (run / 'io500-workload.json').write_text(json.dumps(record, indent=2) + '\n')
 
 

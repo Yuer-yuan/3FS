@@ -55,7 +55,7 @@ struct Serializer {
 
   template <typename T>
   Serializer &put(const T &v) {
-    static_assert(std::is_trivial_v<T>);
+    static_assert(std::is_trivially_copyable_v<T>);
     return putRaw(&v, sizeof(T));
   }
 
@@ -125,7 +125,7 @@ struct Deserializer {
 
   template <typename T>
   Result<T> get() noexcept {
-    static_assert(std::is_trivial_v<T>);
+    static_assert(std::is_trivially_copyable_v<T>);
     CHECK_BUFFER_LENGTH(sizeof(T));
     T val;
     std::memcpy(&val, &s_[pos_], sizeof(T));

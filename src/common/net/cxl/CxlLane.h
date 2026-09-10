@@ -44,6 +44,10 @@ struct CxlLaneConfig {
   uint32_t depth{64};
   uint32_t cellBytes{64U * 1024U};
   std::array<CxlLaneDirectionLayout, 2> directions{};
+  // Local diagnostic identity copied from the existing connect response.
+  uint32_t laneId{};
+  uint32_t requesterEndpoint{};
+  uint32_t targetEndpoint{};
 };
 
 class CxlLane {

@@ -1,9 +1,12 @@
 #include "common/net/cxl/CxlSocket.h"
+#include "common/net/RpcTrace.h"
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <fmt/format.h>
+#include <folly/logging/xlog.h>
 #include <limits>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
@@ -11,6 +14,16 @@
 
 namespace hf3fs::net::cxl {
 namespace {
+
+uint64_t steadyNowNs() noexcept {
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+void recordFirst(std::atomic<uint64_t> &destination) noexcept {
+  uint64_t expected = 0;
+  destination.compare_exchange_strong(expected, steadyNowNs(), std::memory_order_acq_rel);
+}
 
 constexpr uint64_t kCursorPageBytes = 4096;
 
@@ -147,10 +160,10 @@ CxlSocket::CxlSocket(CxlLane lane,
 CxlSocket::~CxlSocket() { close(); }
 
 std::string CxlSocket::describe() {
-  return fmt::format("CXL(peer={}, session={}, lane={})",
-                     peer_,
-                     lane_.config().sessionGeneration,
-                     lane_.config().laneGeneration);
+  return fmt::format("CXL(peer={},session={},lane_id={},lane_generation={},requester={},target={},outbound={})",
+                     peer_, lane_.config().sessionGeneration, lane_.config().laneId,
+                     lane_.config().laneGeneration, lane_.config().requesterEndpoint,
+                     lane_.config().targetEndpoint, static_cast<unsigned>(outbound_));
 }
 
 folly::IPAddressV4 CxlSocket::peerIP() { return peer_.toFollyIP(); }
@@ -252,6 +265,11 @@ Result<size_t> CxlSocket::recv(folly::MutableByteRange buffer) {
     }
     markFault();
     return makeError(std::move(result.error()));
+  }
+  if (*result != 0) {
+    recordFirst(firstInboundConsumedNs_);
+    if (RpcTrace::enabled()) rpcTrace(0, 0, 0, "stream_received", 0,
+        fmt::format("{} direction={} bytes={}", describe(), static_cast<unsigned>(inbound_), *result));
   }
   metrics_->addDeliveredBytes(*result);
   return result;
@@ -363,6 +381,50 @@ void CxlSocket::close() noexcept {
   if (!closed_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
     return;
   }
+  // Preserve the shared-ring state before retirement changes the lane.  This
+  // distinguishes a request that was never consumed from a response that was
+  // never published when an RPC timeout eventually closes the connection.
+  // The progress engine cached these values while the fabric mapping was
+  // valid; process shutdown may destroy sockets after that mapping is gone.
+  XLOGF(INFO,
+        "HF3FS_CXL_SOCKET_CLOSE peer={} role={} session={} generation={} "
+        "submission_producer={} submission_consumer={} completion_producer={} completion_consumer={} "
+        "accepted_bytes={} published_bytes={} peer_delivered_bytes={} armed={} ready={} faulted={} peer_error={} "
+        "first_publish_ns={} first_inbound_visible_ns={} first_inbound_consumed_ns={} "
+        "publish_to_visible_ms={} visible_to_consumed_ms={} publish_to_close_ms={}",
+        peer_,
+        lane_.role() == CxlLaneRole::Requester ? "requester" : "acceptor",
+        lane_.config().sessionGeneration,
+        lane_.config().laneGeneration,
+        lastSubmissionProducer_.load(std::memory_order_acquire),
+        lastSubmissionConsumer_.load(std::memory_order_acquire),
+        lastCompletionProducer_.load(std::memory_order_acquire),
+        lastCompletionConsumer_.load(std::memory_order_acquire),
+        acceptedOffset_.load(std::memory_order_acquire),
+        publishedOffset_.load(std::memory_order_acquire),
+        lastDeliveredOffset_.load(std::memory_order_acquire),
+        armedMask_.load(std::memory_order_acquire),
+        lastReadyMask_.load(std::memory_order_acquire),
+        faulted_.load(std::memory_order_acquire),
+        peerError_.load(std::memory_order_acquire),
+        firstPublishNs_.load(std::memory_order_acquire),
+        firstInboundVisibleNs_.load(std::memory_order_acquire),
+        firstInboundConsumedNs_.load(std::memory_order_acquire),
+        [&] {
+          const auto begin = firstPublishNs_.load(std::memory_order_acquire);
+          const auto end = firstInboundVisibleNs_.load(std::memory_order_acquire);
+          return begin != 0 && end >= begin ? (end - begin) / 1'000'000 : 0;
+        }(),
+        [&] {
+          const auto begin = firstInboundVisibleNs_.load(std::memory_order_acquire);
+          const auto end = firstInboundConsumedNs_.load(std::memory_order_acquire);
+          return begin != 0 && end >= begin ? (end - begin) / 1'000'000 : 0;
+        }(),
+        [&] {
+          const auto begin = firstPublishNs_.load(std::memory_order_acquire);
+          const auto end = steadyNowNs();
+          return begin != 0 && end >= begin ? (end - begin) / 1'000'000 : 0;
+        }());
   lane_.retire(Status(RPCCode::kSocketClosed));
   metrics_->addRetiredLane();
   if (progressEngine_) {
@@ -438,6 +500,10 @@ Result<Void> CxlSocket::publishStaging() {
     return makeError(RPCCode::kStaleGeneration, "CXL published byte offset would overflow");
   }
   publishedOffset_.store(published + stagedBytes_, std::memory_order_release);
+  recordFirst(firstPublishNs_);
+  if (RpcTrace::enabled()) rpcTrace(0, 0, 0, "stream_published", 0,
+      fmt::format("{} direction={} begin={} end={}", describe(), static_cast<unsigned>(outbound_),
+                  published, published + stagedBytes_));
   metrics_->addPublishedBytes(stagedBytes_);
   stagedBytes_ = 0;
   reservedSlot_ = false;
@@ -458,12 +524,26 @@ CxlSocket::Events CxlSocket::computeReady() const noexcept {
     return kEventReadableFlag | kEventWritableFlag;
   }
   if (*readable) {
+    recordFirst(firstInboundVisibleNs_);
     ready |= kEventReadableFlag;
   }
   if (*writable) {
     ready |= kEventWritableFlag;
   }
   return ready;
+}
+
+bool CxlSocket::cacheLaneState() noexcept {
+  const auto submissionProducer = lane_.producerCursor(Direction::Submission);
+  const auto submissionConsumer = lane_.consumerCursor(Direction::Submission);
+  const auto completionProducer = lane_.producerCursor(Direction::Completion);
+  const auto completionConsumer = lane_.consumerCursor(Direction::Completion);
+  bool changed = false;
+  changed |= lastSubmissionProducer_.exchange(submissionProducer, std::memory_order_acq_rel) != submissionProducer;
+  changed |= lastSubmissionConsumer_.exchange(submissionConsumer, std::memory_order_acq_rel) != submissionConsumer;
+  changed |= lastCompletionProducer_.exchange(completionProducer, std::memory_order_acq_rel) != completionProducer;
+  changed |= lastCompletionConsumer_.exchange(completionConsumer, std::memory_order_acq_rel) != completionConsumer;
+  return changed;
 }
 
 void CxlSocket::rearmAndRecheck(Events interest) noexcept {
@@ -478,16 +558,23 @@ void CxlSocket::rearmAndRecheck(Events interest) noexcept {
   }
 }
 
-void CxlSocket::progress() noexcept {
+bool CxlSocket::progress() noexcept {
   if (closed()) {
-    return;
+    return false;
   }
+  const bool cursorChanged = cacheLaneState();
   const Events ready = computeReady();
   lastReadyMask_.store(ready, std::memory_order_release);
   const Events armed = armedMask_.fetch_and(~ready, std::memory_order_acq_rel);
-  if ((ready & armed) != 0) {
+  const bool notified = (ready & armed) != 0;
+  if (notified) {
     signal();
   }
+  // Any shared-ring movement means the lane is active, even if that movement
+  // has not produced a readiness edge yet (for example while an RPC or bulk
+  // transfer is being assembled).  Keep adaptive polling responsive until
+  // the lane becomes genuinely quiet.
+  return cursorChanged || notified;
 }
 
 void CxlSocket::signal() noexcept {

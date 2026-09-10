@@ -164,7 +164,7 @@ int hf3fs_iovcreate_general(struct hf3fs_iov *iov,
 
   iov->base = shm->bufStart;
   iov->iovh = shm;
-  memcpy(iov->id, shm->id.data, sizeof(iov->id));
+  memcpy(iov->id, shm->id.bytes(), sizeof(iov->id));
 
   strcpy(iov->mount_point, hf3fs_mount_point);
   iov->size = size;
@@ -202,7 +202,7 @@ void hf3fs_iovdestroy_general(struct hf3fs_iov *iov,
   }
 
   hf3fs::Uuid id;
-  memcpy(id.data, iov->id, sizeof(id.data));
+  memcpy(id.bytes(), iov->id, id.static_size());
 
   auto link = fmt::format("{}/3fs-virt/iovs/{}{}{}{}{}{}",
                           iov->mount_point,
@@ -233,7 +233,7 @@ int hf3fs_iovopen(struct hf3fs_iov *iov,
                   size_t block_size,
                   int numa) {
   hf3fs::Uuid uuid;
-  memcpy(uuid.data, id, sizeof(uuid.data));
+  memcpy(uuid.bytes(), id, uuid.static_size());
 
   auto link = fmt::format("{}/3fs-virt/iovs/{}{}",
                           hf3fs_mount_point,
@@ -271,7 +271,7 @@ int hf3fs_iovopen(struct hf3fs_iov *iov,
 
   iov->base = shm->bufStart;
   iov->iovh = shm;
-  memcpy(iov->id, shm->id.data, sizeof(iov->id));
+  memcpy(iov->id, shm->id.bytes(), sizeof(iov->id));
 
   strcpy(iov->mount_point, hf3fs_mount_point);
   iov->size = size;
@@ -665,7 +665,7 @@ int hf3fs_prep_io(const struct hf3fs_ior *ior,
   }
 
   hf3fs::Uuid id;
-  memcpy(id.data, ior->iov.id, sizeof(id.data));
+  memcpy(id.bytes(), ior->iov.id, id.static_size());
 
   return *idx;
 }
