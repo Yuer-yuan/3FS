@@ -8,6 +8,7 @@
 #include <folly/experimental/coro/BlockingWait.h>
 #include <folly/executors/ManualExecutor.h>
 #include <gtest/gtest.h>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -418,6 +419,96 @@ TEST_F(TestCxlBufferPublication, PendingAllocationPublicationStillRequiresStable
   EXPECT_TRUE(std::all_of(local->data(), local->data() + 8, [](auto b) { return b == 0x5a; }));
   const auto after = TransportEvidence::process().snapshot();
   EXPECT_EQ(after[TransportEvidence::CxlBulkReadBytes] - before[TransportEvidence::CxlBulkReadBytes], 8);
+}
+
+TEST_F(TestCxlBufferPublication, RepeatedSubrangeExportsKeepPublicationStable) {
+  auto buffer = arena_->tryAllocate(4096);
+  ASSERT_OK(buffer);
+  auto first = buffer->exportRemote(RemoteAccess::Read);
+  ASSERT_OK(first);
+  ASSERT_EQ(first->handle().allocationSlot, 0);
+  auto directory = authority_->layout().range(CxlRangeKind::AllocationDirectory, alignof(CxlAllocationRecord));
+  ASSERT_OK(directory);
+  auto bytes = directory->first(sizeof(CxlAllocationRecord));
+  auto before = loadCxlOwnerRecord<CxlAllocationRecord>(bytes);
+  ASSERT_TRUE(before);
+
+  // A native request fans out into chunk subranges of the same IOV allocation.
+  for (size_t chunk = 0; chunk < 64; ++chunk) {
+    auto part = buffer->subrange(chunk * 64, 64);
+    ASSERT_OK(part);
+    auto exported = part->exportRemote(RemoteAccess::Read);
+    ASSERT_OK(exported);
+    EXPECT_EQ(exported->handle().allocationGeneration, first->handle().allocationGeneration);
+    EXPECT_EQ(exported->handle().offset, first->handle().offset + chunk * 64);
+    auto current = loadCxlOwnerRecord<CxlAllocationRecord>(bytes);
+    ASSERT_TRUE(current);
+    EXPECT_EQ(loadLe64(&current->recordSequence), loadLe64(&before->recordSequence));
+    EXPECT_EQ(loadLe32(&current->recordCrc32c), loadLe32(&before->recordCrc32c));
+  }
+}
+
+TEST_F(TestCxlBufferPublication, PermissionUpgradePublishesOnceAndPreservesNarrowHandles) {
+  auto buffer = arena_->tryAllocate(8);
+  ASSERT_OK(buffer);
+  auto readable = buffer->exportRemote(RemoteAccess::Read);
+  ASSERT_OK(readable);
+  auto directory = authority_->layout().range(CxlRangeKind::AllocationDirectory, alignof(CxlAllocationRecord));
+  ASSERT_OK(directory);
+  auto bytes = directory->first(sizeof(CxlAllocationRecord));
+  auto before = loadCxlOwnerRecord<CxlAllocationRecord>(bytes);
+  ASSERT_TRUE(before);
+  auto writable = buffer->exportRemote(RemoteAccess::Write);
+  ASSERT_OK(writable);
+  auto upgraded = loadCxlOwnerRecord<CxlAllocationRecord>(bytes);
+  ASSERT_TRUE(upgraded);
+  EXPECT_EQ(loadLe64(&upgraded->recordSequence), loadLe64(&before->recordSequence) + 2U);
+  EXPECT_EQ(loadLe32(&upgraded->stateAndPermissions),
+            static_cast<uint32_t>(CxlAllocationState::Exported) | kCxlAllocationRead | kCxlAllocationWrite);
+  EXPECT_EQ(readable->handle().permissions, remoteAccessBits(RemoteAccess::Read));
+  EXPECT_EQ(writable->handle().permissions, remoteAccessBits(RemoteAccess::Write));
+  ASSERT_OK(buffer->exportRemote(RemoteAccess::Read));
+  ASSERT_OK(buffer->exportRemote(RemoteAccess::Write));
+  auto after = loadCxlOwnerRecord<CxlAllocationRecord>(bytes);
+  ASSERT_TRUE(after);
+  EXPECT_EQ(loadLe64(&after->recordSequence), loadLe64(&upgraded->recordSequence));
+  auto local = SharedBuffer::allocateHeap(8);
+  ASSERT_OK(local);
+  std::array<SharedBuffer, 1> buffers{*local};
+  ASSERT_ERROR(folly::coro::blockingWait(transfer_->push(readable->handle(), buffers)),
+               RPCCode::kRemoteBufferAccessDenied);
+}
+
+TEST_F(TestCxlBufferPublication, FailedPermissionUpgradeDoesNotBecomeLocallyGranted) {
+  // Seed the persisted sequence so the first export succeeds but an upgrade
+  // cannot be published. This exercises rollback without a production hook.
+  {
+    auto old = arena_->tryAllocate(8);
+    ASSERT_OK(old);
+    ASSERT_OK(old->exportRemote(RemoteAccess::Read));
+  }
+  arena_.reset();
+  auto directory = authority_->layout().range(CxlRangeKind::AllocationDirectory, alignof(CxlAllocationRecord));
+  ASSERT_OK(directory);
+  auto bytes = directory->first(sizeof(CxlAllocationRecord));
+  auto previous = loadCxlOwnerRecord<CxlAllocationRecord>(bytes);
+  ASSERT_TRUE(previous);
+  storeLe64(&previous->recordSequence, std::numeric_limits<uint64_t>::max() - 5U);
+  storeLe32(&previous->recordCrc32c, cxlAllocationRecordChecksum(*previous));
+  ASSERT_TRUE(publishCxlOwnerRecord(bytes, *previous));
+  auto recreated = CxlBufferArena::create(authority_);
+  ASSERT_OK(recreated);
+  arena_ = *recreated;
+  auto buffer = arena_->tryAllocate(8);
+  ASSERT_OK(buffer);
+  ASSERT_OK(buffer->exportRemote(RemoteAccess::Read));
+  ASSERT_ERROR(buffer->exportRemote(RemoteAccess::Write), RPCCode::kStaleGeneration);
+  ASSERT_ERROR(buffer->exportRemote(RemoteAccess::Write), RPCCode::kStaleGeneration);
+  ASSERT_OK(buffer->exportRemote(RemoteAccess::Read));
+  auto after = loadCxlOwnerRecord<CxlAllocationRecord>(bytes);
+  ASSERT_TRUE(after);
+  EXPECT_EQ(loadLe32(&after->stateAndPermissions),
+            static_cast<uint32_t>(CxlAllocationState::Exported) | kCxlAllocationRead);
 }
 
 TEST_F(TestCxlBuffer, SubrangeKeepsAllocationIdentityAndGeneration) {

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 import os
@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from typing import Callable
 
 HERE = Path(__file__).resolve().parent
@@ -30,6 +31,7 @@ import build
 import io500
 import runtime
 import topology as topology_module
+import storage_layout
 
 
 HOSTNAME = "victoryang00-threadripper"
@@ -102,6 +104,25 @@ def _chains_ready(output: str, expected: int = 4) -> bool:
     return "OFFLINE" not in output and output.count("(SERVING-UPTODATE)") == expected
 
 
+def _completed_routing_version(output: str) -> int:
+    """Observe a completed native refresh, not just receipt of a candidate view.
+
+    MgmtdClient.cc logs the version before updateRoutingInfo(), which may discard
+    an incomplete view. The operation's success log is emitted after the store.
+    """
+    pending = completed = 0
+    for line in output.splitlines():
+        match = re.search(r'MgmtdClient: get new routing info version (\d+)', line)
+        if match:
+            pending = int(match[1])
+        if 'MgmtdClient: discard incomplete routing info version' in line:
+            pending = 0
+        if re.search(r'MgmtdClientOp RefreshRoutingInfo .*\] succeeded\.', line):
+            completed = max(completed, pending)
+            pending = 0
+    return completed
+
+
 def _probe_storage_fallocate(path: Path) -> None:
     probe_path = None
     try:
@@ -148,7 +169,7 @@ def preflight(repo: Path, selected: topology_module.Topology) -> dict:
         raise ClusterError(f"required TCP ports are occupied: {occupied}")
     return {
         "hostname": platform.node(), "machine": platform.machine(),
-        "topology": topology_module.validate_host_topology(),
+        "topology": topology_module.validate_host_topology(selected=selected),
         "tools": tools, "free_bytes": free, "ports": selected.ports,
         "rlimit_nofile": nofile,
     }
@@ -158,26 +179,28 @@ def _session(run_id: str) -> int:
     return int.from_bytes(hashlib.sha256(run_id.encode()).digest()[:4], "big") or 1
 
 
-def _native_manifest(clients: int, session: int, region_bytes: int) -> dict:
-    value = manifests.load_topology(manifests.DEFAULT_TOPOLOGY)
-    roles = value["roles"]
-    addresses = {
-        "fabric-authority": 12499, "mgmtd": 12501, "meta": 12502,
-        "storage-0": 12503, "admin": 12507,
-    }
-    for role, port in addresses.items():
-        roles[role]["guest"] = 0
-        roles[role]["address"] = f"CXL://127.0.0.1:{port}"
-    roles["fdb"]["guest"] = 0
-    for index in range(clients):
-        roles[f"client-{index}"] = {
-            "endpoint": 16 + index, "guest": 0,
-            "address": f"CXL://127.0.0.1:{12516 + index}", "serves_data": False,
-        }
-    return manifests.build_manifest(
-        value, scenario="storage", replication_factor=1, clients=clients,
-        session_generation=session, total_region_bytes=region_bytes, lane_count=LANE_COUNT,
-    )
+def _native_manifest(clients: int, session: int, region_bytes: int, *, storage_count: int = 1) -> dict:
+    return storage_layout.native_manifest(clients, storage_count, session, region_bytes)
+
+
+def _listening_sockets(pid: int) -> list[dict]:
+    inodes = set()
+    for fd in Path(f"/proc/{pid}/fd").iterdir():
+        try:
+            link = os.readlink(fd)
+        except FileNotFoundError:
+            continue
+        match = re.fullmatch(r"socket:\[(\d+)\]", link)
+        if match:
+            inodes.add(match[1])
+    sockets = []
+    for line in Path(f"/proc/{pid}/net/tcp").read_text().splitlines()[1:]:
+        row = line.split()
+        if row[3] == '0A' and row[9] in inodes:
+            address, port = row[1].split(':')
+            sockets.append(dict(address=socket.inet_ntoa(bytes.fromhex(address)[::-1]),
+                                port=int(port, 16), inode=int(row[9])))
+    return sorted(sockets, key=lambda item: item['port'])
 
 
 def _replace_config_paths(
@@ -233,6 +256,12 @@ class NativeCluster:
             "schema": SCHEMA, "status": "running", "official": False,
             "expected_invalid": True, "run_id": config.run_id,
             "topology": config.topology_name, "ranks": self.topology.ranks,
+            "storage_count": self.topology.storage_count, "replication_factor": 1,
+            "storage_engine": {"name": "upstream-chunk-engine", "verified": False, "targets": []},
+            "target_placements": [asdict(p) for p in storage_layout.target_placements(self.topology.storage_count)],
+            "storage_nodes": [dict(asdict(n), llc=3-n.index) for n in self.topology.storage_nodes],
+            "server_physical_cores": sum(len(v) for v in self.topology.server_cpus.values()),
+            "deployment_sources": {str(p.relative_to(HERE)): runtime.sha256(p) for p in sorted(HERE.glob('*.py'))},
             "build_manifest": str(Path(config.build_manifest).resolve()),
             "build_manifest_sha256": runtime.sha256(config.build_manifest),
             "profile_sha256": runtime.sha256(self.profile),
@@ -260,6 +289,9 @@ class NativeCluster:
         self.processes: list[runtime.OwnedProcess] = []
         self.mounts: list[Path] = []
         self.configs: list[Path] = []
+        self.storage_configs: dict[int, Path] = {}
+        self.storage_paths: dict[int, tuple[Path, ...]] = {}
+        self.storage_processes: dict[int, runtime.OwnedProcess] = {}
         self.region = self.roots.volatile / "cxl-region.bin"
         self.fdb_cluster = self.roots.volatile / "fdb.cluster"
         self.session = _session(config.run_id)
@@ -303,9 +335,14 @@ class NativeCluster:
             raise ClusterError(f"node-1 region prefault failed: {prefault.stderr.strip()}")
         token = hashlib.sha256((self.config.run_id + "-fdb").encode()).hexdigest()[:32]
         self.fdb_cluster.write_text(f"hf3fs:{token}@127.0.0.1:4500\n", encoding="utf-8")
-        for index in range(1, 5):
-            (self.roots.storage / f"data{index}").mkdir()
-        manifest_value = _native_manifest(self.topology.ranks, self.session, self.topology.region_bytes)
+        for node in self.topology.storage_nodes:
+            root = self.roots.storage if self.topology.storage_count == 1 else self.roots.storage / f"node-{node.node_id}"
+            paths = tuple(root / f"data{i + 1}" for i in range(4 // self.topology.storage_count))
+            for path in paths:
+                path.mkdir(parents=True)
+            self.storage_paths[node.node_id] = paths
+        manifest_value = _native_manifest(self.topology.ranks, self.session, self.topology.region_bytes,
+                                          storage_count=self.topology.storage_count)
         manifest_path = self.roots.bundle / "manifest.json"
         manifests.write_manifest(manifest_path, manifest_value)
         lock = self.roots.volatile / "authority.lock"
@@ -335,6 +372,18 @@ class NativeCluster:
             manifests.write_manifest(destination / "manifest.json", manifest_value, replace_generated=True)
             (destination / "authority.lock").write_text(receipt)
             self.configs.append(destination)
+        adaptations = {}
+        for node in self.topology.storage_nodes:
+            destination = self.configs[0]
+            if self.topology.storage_count > 1:
+                destination = config_root / f"storage-{node.index}"
+                adaptations[str(node.node_id)] = storage_layout.render_storage_config(
+                    self.configs[0], destination, node, self.storage_paths[node.node_id],
+                    self.roots.bundle / "logs" / f"storage-{node.index}")
+            storage_layout.validate_storage_config(destination, node, self.storage_paths[node.node_id])
+            self.storage_configs[node.node_id] = destination
+        self.ledger.update(storage_config_adaptations=adaptations,
+                           storage_paths={str(n): list(map(str, paths)) for n, paths in self.storage_paths.items()})
         rendered = {}
         for path in sorted(config_root.rglob("*")):
             if path.is_file():
@@ -382,25 +431,71 @@ class NativeCluster:
 
     def _run_command(self, role: str, argv: list[str], timeout: float = 180) -> str:
         started = time.monotonic_ns()
-        completed = subprocess.run(
-            argv, cwd=str(self.repo / "target/build/giga-native-3fs"), env=self._env(),
-            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout,
-        )
+        before = resource.getrusage(resource.RUSAGE_CHILDREN)
+        timeout_error = None
+        try:
+            completed = subprocess.run(
+                argv, cwd=str(self.repo / "target/build/giga-native-3fs"), env=self._env(),
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as error:
+            timeout_error = error
+            partial = error.stdout or ''
+            if isinstance(partial, bytes):
+                partial = partial.decode(errors='replace')
+            completed = subprocess.CompletedProcess(argv, -9, partial)
+        after = resource.getrusage(resource.RUSAGE_CHILDREN)
         log = self.roots.bundle / "logs" / f"{role}.log"
         with log.open("a", encoding="utf-8") as output:
             output.write("COMMAND " + json.dumps(argv) + "\n")
             output.write(completed.stdout)
             output.write(f"\nEXIT {completed.returncode}\n")
-        if completed.returncode:
-            raise ClusterError(f"{role} exited with {completed.returncode}: {completed.stdout[-2000:]}")
         commands = list(self.ledger.value.get("commands", []))
         commands.append({"role": role, "argv": argv, "returncode": completed.returncode,
-                         "host_start_ns": started, "host_end_ns": time.monotonic_ns()})
+                         "host_start_ns": started, "host_end_ns": time.monotonic_ns(),
+                         'child_user_seconds': after.ru_utime-before.ru_utime,
+                         'child_system_seconds': after.ru_stime-before.ru_stime,
+                         'children_peak_rss_kib': after.ru_maxrss, 'timed_out': timeout_error is not None})
         self.ledger.update(commands=commands)
+        if timeout_error is not None:
+            raise ClusterError(f'{role} exceeded {timeout}s; partial output retained in {log}') from timeout_error
+        if completed.returncode:
+            raise ClusterError(f"{role} exited with {completed.returncode}: {completed.stdout[-2000:]}")
         return completed.stdout
 
     def _admin(self, arguments: list[str], role: str = "admin") -> str:
         return self._run_command(role, [str(self.artifacts["admin_cli"]), "--cfg", str(self.configs[0] / "admin_cli.toml"), "--", *arguments])
+
+    def _create_targets(self) -> None:
+        """Select the upstream engine explicitly and retain each physical config."""
+        archive = self.roots.bundle / "storage-targets"
+        archive.mkdir(parents=True, exist_ok=False)
+        placements = storage_layout.target_placements(self.topology.storage_count)
+        records = []
+        for index, target in enumerate(placements, 1):
+            self._admin([
+                "create-target", "--node-id", str(target.node_id),
+                "--disk-index", str(target.disk_index), "--target-id", str(target.target_id),
+                "--chain-id", str(target.chain_id), "--use-new-chunk-engine",
+            ], f"admin-target-{index}")
+            directory = self.storage_paths[target.node_id][target.disk_index] / str(target.target_id)
+            physical = directory / "target.toml"
+            saved = archive / f"{target.target_id}.toml"
+            # Keep even a rejected config as evidence; never convert/reuse an old target.
+            saved.write_bytes(physical.read_bytes())
+            actual = tomllib.loads(saved.read_text())
+            if actual.get("only_chunk_engine") is not True:
+                raise ClusterError(f"target {target.target_id} did not enable the upstream chunk engine")
+            if (actual.get("target_id") != target.target_id
+                    or actual.get("chain_id") != target.chain_id
+                    or actual.get("path") != str(directory)):
+                raise ClusterError(f"target identity differs from the requested placement: {target.target_id}")
+            records.append({**asdict(target), "only_chunk_engine": True,
+                            "physical_config": str(physical),
+                            "archive": str(saved.relative_to(self.roots.bundle)),
+                            "sha256": runtime.sha256(saved)})
+            self.ledger.update(storage_engine={"name": "upstream-chunk-engine",
+                               "verified": len(records) == len(placements), "targets": list(records)})
 
     def start(self) -> None:
         if not self.prepared:
@@ -438,7 +533,7 @@ class NativeCluster:
             "--meta", str(self.configs[0] / "meta_main.toml"), "--storage", str(self.configs[0] / "storage_main.toml"),
             "--fuse", str(self.configs[0] / "hf3fs_fuse_main.toml"), "--skip-config-check", "1", "524288", "1",
         ], "admin-init-cluster")
-        for key, role, port in (("mgmtd", "mgmtd_main", 12501), ("meta", "meta_main", 12502), ("storage", "storage_main", 12503)):
+        for key, role, port in (("mgmtd", "mgmtd_main", 12501), ("meta", "meta_main", 12502)):
             process = self._start(role.removesuffix("_main"), self.artifacts[role], [
                 "--app_cfg", str(self.configs[0] / f"{key}_main_app.toml"),
                 "--launcher_cfg", str(self.configs[0] / f"{key}_main_launcher.toml"),
@@ -446,32 +541,80 @@ class NativeCluster:
             ], self.topology.server_cpus[key])
             service_log = self.roots.bundle / "logs" / "node0" / f"{key}.log"
             self._wait(process, lambda p=port, path=service_log: self._port(p) and self._contains(path, "Start server finished"), key, 300)
+        for node in self.topology.storage_nodes:
+            directory = self.storage_configs[node.node_id]
+            process = self._start(node.role, self.artifacts['storage_main'], [
+                '--app_cfg', str(directory / 'storage_main_app.toml'),
+                '--launcher_cfg', str(directory / 'storage_main_launcher.toml'),
+                '--cfg', str(directory / 'storage_main.toml'),
+            ], node.cpus)
+            self.storage_processes[node.node_id] = process
+            log_dir = 'node0' if self.topology.storage_count == 1 else f'storage-{node.index}'
+            service_log = self.roots.bundle / 'logs' / log_dir / 'storage.log'
+            self._wait(process, lambda p=node.port, path=service_log: self._port(p) and self._contains(path, 'Start server finished'), node.role, 300)
         deadline = time.monotonic() + 180
+        pids = {node_id: p.pid for node_id, p in self.storage_processes.items()}
         while True:
             nodes = self._admin(["list-nodes"], "admin-list-nodes")
-            if re.search(r"50 .*META .*HEARTBEAT_CONNECTED", nodes) and re.search(r"10000 .*STORAGE .*HEARTBEAT_CONNECTED", nodes):
+            try:
+                node_records = storage_layout.validate_nodes(nodes, self.topology.storage_nodes, pids)
                 break
+            except ValueError:
+                pass
             if time.monotonic() >= deadline:
                 raise ClusterError("meta/storage heartbeats did not connect")
             time.sleep(2)
-        self._admin(["get-config", "--node-id", "10000", "--output-file", str(self.roots.bundle / "storage-core-config.toml")], "admin-core-proof")
-        for disk in range(1, 5):
-            target = f"10000{disk:02}001"
-            self._admin(["create-target", "--node-id", "10000", "--disk-index", str(disk - 1), "--target-id", target, "--chain-id", target], f"admin-target-{disk}")
+        core_records = []
+        for node in self.topology.storage_nodes:
+            path = self.roots.bundle / ('storage-core-config.toml' if node.index == 0 else f'storage-{node.index}-core-config.toml')
+            self._admin(['get-config', '--node-id', str(node.node_id), '--output-file', str(path)], f'admin-core-proof-{node.node_id}')
+            actual = tomllib.loads(path.read_text())
+            expected = tomllib.loads((self.storage_configs[node.node_id] / 'storage_main.toml').read_text())
+            storage_layout.validate_live_config(actual, expected)
+            listeners = _listening_sockets(pids[node.node_id])
+            addresses = storage_layout.validate_listeners(listeners, node, set(self.topology.ports.values()))
+            core_records.append(dict(node_id=node.node_id, pid=pids[node.node_id], listeners=listeners,
+                                     **addresses,
+                                     core_config=str(path), sha256=runtime.sha256(path)))
+        self.ledger.update(node_readiness=node_records, storage_core=core_records)
+        self._create_targets()
         self._admin(["upload-chains", str(self.configs[0] / "chains.csv")], "admin-upload-chains")
         self._admin(["upload-chain-table", "1", str(self.configs[0] / "chain-table.csv"), "--desc", "giga-replica-1"], "admin-upload-table")
+        table = self.roots.bundle / 'actual-chain-table.csv'
+        self._admin(['dump-chain-table', '1', str(table)], 'admin-dump-chain-table')
         deadline = time.monotonic() + 180
         chain_attempts = 0
         while True:
             chain_attempts += 1
             chains = self._admin(["list-chains"], "admin-list-chains")
-            if _chains_ready(chains):
-                self.ledger.update(chain_readiness={"attempts": chain_attempts, "status": "serving"})
+            targets = self._admin(['list-targets'], 'admin-list-targets')
+            try:
+                placement = storage_layout.validate_placement(targets, chains, table.read_text(), self.topology.storage_count)
+                self.ledger.update(chain_readiness={"attempts": chain_attempts, "status": "serving", 'placement': placement})
                 break
+            except ValueError:
+                pass
             if time.monotonic() >= deadline:
                 raise ClusterError("storage targets did not reach SERVING state")
             time.sleep(1)
         self._admin(["mkdir", "--perm", "0755", "test"], "admin-mkdir")
+        # Target health is the mgmtd view. The meta chain allocator uses its own
+        # periodically refreshed view, so mounting clients must wait for that
+        # publication too. Do not shorten the native refresh interval or retry
+        # failed application writes to hide an incomplete startup.
+        admin_log = self.roots.bundle / 'logs/node0/admin.log'
+        meta_log = self.roots.bundle / 'logs/node0/meta.log'
+        required_version = _completed_routing_version(admin_log.read_text(errors='replace'))
+        if required_version <= 0:
+            raise ClusterError('cannot establish published chain-table routing version')
+        meta_process = next(p for p in self.processes if p.receipt.role == 'meta')
+        wait_started = time.monotonic_ns()
+        self._wait(meta_process,
+            lambda: _completed_routing_version(meta_log.read_text(errors='replace')) >= required_version,
+            'meta chain-table routing publication', 180)
+        self.ledger.update(meta_routing_readiness=dict(required_version=required_version,
+            observed_version=_completed_routing_version(meta_log.read_text(errors='replace')),
+            wait_ns=time.monotonic_ns()-wait_started, evidence='completed native refresh in meta.log'))
 
     def mount_clients(self) -> None:
         for index, mount in enumerate(self.mounts):
@@ -498,8 +641,19 @@ class NativeCluster:
             if process.process.poll() is not None:
                 continue
             status = Path(f"/proc/{process.pid}/status").read_text(errors="replace")
+            stat = Path(f'/proc/{process.pid}/stat').read_text().rsplit(')', 1)[1].split()
+            thread_affinity = {}
+            for thread in Path(f'/proc/{process.pid}/task').iterdir():
+                try:
+                    thread_affinity[thread.name] = sorted(os.sched_getaffinity(int(thread.name)))
+                except ProcessLookupError:
+                    continue
             processes.append({"role": process.receipt.role, "pid": process.pid,
                               "cpus": re.findall(r"(?m)^Cpus_allowed_list:\s*(.*)$", status),
+                              'cpu_user_ticks': int(stat[11]), 'cpu_system_ticks': int(stat[12]),
+                              'clock_ticks_per_second': os.sysconf('SC_CLK_TCK'),
+                              'rss_kib': re.findall(r'(?m)^VmRSS:\s*(\d+)', status),
+                              'thread_affinity': thread_affinity,
                               "threads": len(list(Path(f"/proc/{process.pid}/task").iterdir()))})
         value = {"stage": stage, "host_monotonic_ns": time.monotonic_ns(), "processes": processes,
                  "mountinfo": [line for line in Path("/proc/self/mountinfo").read_text(errors="replace").splitlines()
@@ -605,12 +759,17 @@ def execute_cluster(config: ClusterConfig, workload: Callable[[NativeCluster], d
         if cluster.ledger.value.get("first_failure"):
             raise ClusterError(cluster.ledger.value["first_failure"]["message"])
         if not workload_result or workload_result.get("status") != "passed":
-            raise ClusterError("IO500 workload did not pass")
+            raise ClusterError("workload did not pass")
         if not teardown or teardown.get("all_owned_processes_stopped") is not True:
             raise ClusterError("cluster teardown is incomplete")
         participants = {item["endpoint"] for item in cluster.ledger.value["manifest"]["participants"]}
         totals = validate_transport(teardown["transport_records"], participants, cluster.topology.ranks)
-        cluster.ledger.update(status="passed", transport_totals=totals, host_end_ns=time.monotonic_ns())
+        storage_transport = storage_layout.validate_storage_transport(
+            teardown['transport_records'], cluster.topology.storage_nodes,
+            {nid: p.pid for nid, p in cluster.storage_processes.items()}, cluster.session,
+            cluster.ledger.value['manifest']['manifestSha256'])
+        cluster.ledger.update(status="passed", transport_totals=totals, storage_transport=storage_transport,
+                              host_end_ns=time.monotonic_ns())
         runtime.safe_remove_owned_root(cluster.roots.volatile, Path("/dev/shm"), cluster.roots.owner_token)
         runtime.safe_remove_owned_root(cluster.roots.storage, STORAGE_PARENT, cluster.roots.owner_token)
     except Exception as error:
@@ -622,7 +781,7 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--repo", type=Path, required=True)
     result.add_argument("--build-manifest", type=Path)
-    result.add_argument("--topology", choices=("1c1s", "2c1s", "3c1s"), required=True)
+    result.add_argument("--topology", choices=topology_module.TOPOLOGIES, required=True)
     result.add_argument("--run-id")
     result.add_argument("--profile", type=Path)
     result.add_argument("--cxl-poll-profile", choices=tuple(CXL_POLL_PROFILES), default="adaptive")

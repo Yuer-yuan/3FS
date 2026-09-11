@@ -81,6 +81,21 @@ def hf3fs_cmake_command(source: Path, build: Path, fdb: Path) -> list[str]:
     ]
 
 
+def native_compiler_environment(base: dict[str, str], jobs: int) -> dict[str, str]:
+    if jobs <= 0:
+        raise ValueError("jobs must be positive")
+    # The Rust librocksdb-sys build does not inherit RocksDB's CMake feature
+    # detection. Use its existing Linux core-ID implementation: clang-18's
+    # optimized CPUID fallback can corrupt callee-saved RBX under contention.
+    # This is a native-platform build setting, not an engine/IO policy change.
+    return dict(
+        base, CC="/usr/bin/clang-18", CXX="/usr/bin/clang++-18",
+        CXXFLAGS=("--gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/13 "
+                  "-DROCKSDB_SCHED_GETCPU_PRESENT=1"),
+        CARGO_BUILD_JOBS=str(jobs), CMAKE_POLICY_VERSION_MINIMUM="3.5",
+    )
+
+
 def source_fingerprint(root: Path) -> tuple[str, int]:
     root = Path(root).resolve(strict=True)
     digest = hashlib.sha256()
@@ -264,11 +279,7 @@ def execute(repo: Path, output: Path, jobs: int) -> Path:
     source = repo / "components/3FS"
     build_dir = output / "hf3fs"
     configure = hf3fs_cmake_command(source, build_dir, fdb_prefix)
-    compiler_env = dict(
-        os.environ, CC="/usr/bin/clang-18", CXX="/usr/bin/clang++-18",
-        CXXFLAGS="--gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/13",
-        CMAKE_POLICY_VERSION_MINIMUM="3.5",
-    )
+    compiler_env = native_compiler_environment(dict(os.environ), jobs)
     run(configure, log=logs / "hf3fs.log", env=compiler_env)
     run(
         ["/usr/bin/cmake", "--build", str(build_dir), "--parallel", str(jobs), "--target", *PRODUCTS, *TEST_TARGETS],
@@ -296,6 +307,8 @@ def execute(repo: Path, output: Path, jobs: int) -> Path:
         fdb=fdb,
         io500=io500,
         profile={"path": str(profile), "sha256": sha256(profile)},
+        compiler_environment={key: compiler_env[key] for key in
+                              ("CC", "CXX", "CXXFLAGS", "CARGO_BUILD_JOBS", "CMAKE_POLICY_VERSION_MINIMUM")},
         tools={
             "cmake": run(["/usr/bin/cmake", "--version"]).splitlines()[0],
             "ninja": run(["/usr/bin/ninja", "--version"]),

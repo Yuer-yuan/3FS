@@ -21,6 +21,10 @@ class IovTable {
   Result<meta::Inode> lookupIov(const char *key, const meta::UserInfo &ui);
   std::optional<int> iovDesc(meta::InodeId iid);
   Result<meta::Inode> statIov(int key, const meta::UserInfo &ui);
+  Result<std::shared_ptr<lib::ShmBuf>> createCxlIov(size_t size, size_t blockSize, pid_t pid,
+                                                  const meta::UserInfo &ui);
+  Result<std::shared_ptr<lib::ShmBuf>> openCxlIov(Uuid id, size_t size, size_t blockSize,
+                                                const meta::UserInfo &ui);
 
  public:
   std::pair<std::shared_ptr<std::vector<meta::DirEntry>>, std::shared_ptr<std::vector<std::optional<meta::Inode>>>>

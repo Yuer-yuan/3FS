@@ -4,6 +4,7 @@
 
 #include "StorageClientImpl.h"
 #include "StorageClientInMem.h"
+#include "IOBufferStats.h"
 #include "common/monitor/ScopedMetricsWriter.h"
 #include "common/net/TransportRuntime.h"
 
@@ -15,6 +16,12 @@ static monitor::LatencyRecorder iobuf_reg_latency{"storage_client.iobuf_reg.late
 static monitor::DistributionRecorder iobuf_reg_size{"storage_client.iobuf_reg.size"};
 static monitor::CountRecorder shadowCopyInBytes{"storage_client.shadow_copy_in_bytes"};
 static monitor::CountRecorder shadowCopyOutBytes{"storage_client.shadow_copy_out_bytes"};
+static std::atomic<uint64_t> copyInTotal{};
+static std::atomic<uint64_t> copyOutTotal{};
+
+IOBufferCopyStats ioBufferCopyStats() noexcept {
+  return {copyInTotal.load(std::memory_order_relaxed), copyOutTotal.load(std::memory_order_relaxed)};
+}
 
 bool IOBuffer::contains(const uint8_t *data, uint32_t len) const {
   const auto begin = reinterpret_cast<uintptr_t>(data_);
@@ -30,6 +37,7 @@ Result<net::RemoteExport> IOBuffer::exportRemote(size_t offset, size_t length, n
   if (shadowed() && (net::remoteAccessBits(access) & net::remoteAccessBits(net::RemoteAccess::Read)) != 0) {
     std::memcpy(range->data(), data_ + offset, length);
     shadowCopyInBytes.addSample(length);
+    copyInTotal.fetch_add(length, std::memory_order_relaxed);
   }
   return range->exportRemote(access);
 }
@@ -42,6 +50,7 @@ Result<Void> IOBuffer::copyOut(size_t offset, size_t length) const {
   if (shadowed()) {
     std::memcpy(data_ + offset, range->data(), length);
     shadowCopyOutBytes.addSample(length);
+    copyOutTotal.fetch_add(length, std::memory_order_relaxed);
   }
   return Void{};
 }

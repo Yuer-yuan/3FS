@@ -180,6 +180,8 @@ def run(cluster) -> dict:
         "--io500", str(cluster.artifacts["io500"]), "--config", str(effective),
         "--library-path", cluster.library_path,
     ]
+    if getattr(cluster, 'posix_mode', None) is not None:
+        argv += ['--posix-mode', cluster.posix_mode, '--posix-library', str(cluster.posix_library)]
     log_path = cluster.roots.bundle / "io500.log"
     watchdog = PhaseWatchdog()
     process = subprocess.Popen(

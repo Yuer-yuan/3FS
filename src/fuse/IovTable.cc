@@ -1,8 +1,11 @@
 #include "IovTable.h"
 
 #include <folly/experimental/coro/BlockingWait.h>
+#include <cstring>
+#include <unistd.h>
 
 #include "IoRing.h"
+#include "common/net/TransportRuntime.h"
 #include "fbs/meta/Common.h"
 
 namespace hf3fs::fuse {
@@ -111,6 +114,64 @@ static Result<IovAttrs> parseKey(const char *key) {
 }
 
 constexpr int iovIidStart = meta::InodeId::iovIidStart;
+
+Result<std::shared_ptr<lib::ShmBuf>> IovTable::createCxlIov(size_t size, size_t blockSize, pid_t pid,
+                                                          const meta::UserInfo &ui) {
+  const auto page = sysconf(_SC_PAGESIZE);
+  if (ui.uid != meta::Uid(0) || page <= 0 || size == 0 || blockSize > size ||
+      size > std::numeric_limits<size_t>::max() - 2 * static_cast<size_t>(page)) {
+    return makeError(StatusCode::kInvalidArg, "invalid trusted CXL IOV request");
+  }
+  auto arena = net::TransportRuntime::cxlBufferArena();
+  auto fabric = net::TransportRuntime::cxlFabric();
+  if (!arena || !fabric || fabric->config().regionType != net::cxl::CxlFabric::RegionType::File) {
+    return makeError(StatusCode::kInvalidArg, "native CXL IOV requires a file-backed fabric");
+  }
+  const size_t rounded = (size + page - 1) / page * page;
+  auto allocation = arena->tryAllocate(rounded + page);
+  RETURN_ON_ERROR(allocation);
+  const auto address = reinterpret_cast<uintptr_t>(allocation->data());
+  const size_t padding = (page - address % page) % page;
+  auto range = allocation->subrange(padding, size);
+  RETURN_ON_ERROR(range);
+  std::memset(allocation->data(), 0, allocation->size());
+  auto storage = std::make_shared<storage::client::IOBuffer>(std::move(*range));
+  // Never expose bytes left by a prior allocation to a new IOV.
+  auto shm = std::make_shared<lib::ShmBuf>(std::move(storage), blockSize, Uuid::random());
+  shm->key = shm->id.toHexString() + (blockSize ? fmt::format(".b{}", blockSize) : std::string());
+  shm->path = Path("/hf3fs-cxl-iov-" + shm->id.toHexString());
+  shm->user = ui.uid;
+  shm->pid = pid;
+  auto descriptor = iovs->alloc();
+  if (!descriptor) {
+    return makeError(ClientAgentCode::kTooManyOpenFiles, "too many CXL IOVs allocated");
+  }
+  std::unique_lock indexLock(iovdLock_);
+  std::unique_lock idLock(shmLock);
+  if (iovds_.contains(shm->key) || shmsById.contains(shm->id)) {
+    iovs->dealloc(*descriptor);
+    return makeError(StatusCode::kInvalidArg, "duplicate CXL IOV identity");
+  }
+  iovs->table[*descriptor].store(shm);
+  iovds_[shm->key] = *descriptor;
+  shmsById[shm->id] = *descriptor;
+  return shm;
+}
+
+Result<std::shared_ptr<lib::ShmBuf>> IovTable::openCxlIov(Uuid id, size_t size, size_t blockSize,
+                                                        const meta::UserInfo &ui) {
+  std::shared_lock lock(shmLock);
+  auto it = shmsById.find(id);
+  if (it == shmsById.end()) {
+    return makeError(MetaCode::kNotFound, "CXL IOV is no longer registered");
+  }
+  auto shm = iovs->table[it->second].load();
+  if (!shm || !shm->isCxlStorage() || shm->user != ui.uid || shm->size != size ||
+      shm->blockSize != (blockSize ? blockSize : size)) {
+    return makeError(StatusCode::kInvalidArg, "CXL IOV identity, owner or dimensions mismatch");
+  }
+  return shm;
+}
 
 std::optional<int> IovTable::iovDesc(meta::InodeId iid) {
   auto iidn = (ssize_t)iid.u64();
@@ -242,25 +303,26 @@ Result<std::pair<meta::Inode, std::shared_ptr<lib::ShmBuf>>> IovTable::addIov(co
 }
 
 Result<std::shared_ptr<lib::ShmBuf>> IovTable::rmIov(const char *key, const meta::UserInfo &ui) {
-  auto res = lookupIov(key, ui);
-  RETURN_ON_ERROR(res);
-
-  {
-    std::unique_lock lock(iovdLock_);
-    iovds_.erase(key);
+  // Creator unlink and the final directory-lease release may race. Keep name,
+  // UUID and slot removal atomic, or a second remover can free a reused slot.
+  // Match createCxlIov's lock order; openCxlIov holds shmLock while taking its owner.
+  std::unique_lock indexLock(iovdLock_);
+  auto it = iovds_.find(key);
+  if (it == iovds_.end()) {
+    return makeError(MetaCode::kNotFound, std::string("iov key not found ") + key);
   }
-
-  {
-    auto res = parseKey(key);
-
-    std::unique_lock lock(shmLock);
-    shmsById.erase(res->id);
+  const auto iovd = it->second;
+  auto shm = iovs->table[iovd].load();
+  if (!shm) {
+    return makeError(MetaCode::kNotFound, "iov slot is no longer registered");
   }
-
-  auto iovd = iovDesc(res->id);
-  auto shm = iovs->table[*iovd].load();
-  iovs->remove(*iovd);
-
+  if (shm->user != ui.uid) {
+    return makeError(MetaCode::kNoPermission, "iov not for user");
+  }
+  std::unique_lock idLock(shmLock);
+  iovds_.erase(it);
+  shmsById.erase(shm->id);
+  iovs->remove(iovd);
   return shm;
 }
 

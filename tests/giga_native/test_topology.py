@@ -98,6 +98,35 @@ class TopologyTest(unittest.TestCase):
             self.assertEqual([item["cpu"] for item in record["selected"]], sorted(selected))
             self.assertEqual(record["memory_node"], 1)
 
+    def test_multiserver_rejects_offline_smt_and_wrong_llc(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cpu_root = root / 'devices/system/cpu'
+            cpu_root.mkdir(parents=True)
+            online = cpu_root / 'online'
+            online.write_text('0-47')
+            caches = {1: 0, 7: 1, 13: 2, 18: 3, 19: 3, 20: 3, 21: 3, 22: 3, 23: 3,
+                      16: 2, 17: 2, 10: 1, 11: 1, 4: 0, 5: 0}
+            for cpu, llc in caches.items():
+                base = cpu_root / f'cpu{cpu}'
+                for relative, value in [('topology/core_id', cpu), ('topology/physical_package_id', 0), ('cache/index3/id', llc)]:
+                    path = base / relative; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(str(value))
+            node = root / 'devices/system/node/node1/cpulist'
+            node.parent.mkdir(parents=True); node.write_text('')
+            case = MODULE.topology('3c4s')
+            self.assertEqual(len(MODULE.validate_host_topology(root, selected=case)['selected']), 15)
+            online.write_text('0-3,5-47')
+            with self.assertRaisesRegex(ValueError, 'offline'):
+                MODULE.validate_host_topology(root, selected=case)
+            online.write_text('0-47')
+            (cpu_root / 'cpu5/topology/core_id').write_text('4')
+            with self.assertRaisesRegex(ValueError, 'SMT'):
+                MODULE.validate_host_topology(root, selected=case)
+            (cpu_root / 'cpu5/topology/core_id').write_text('5')
+            (cpu_root / 'cpu5/cache/index3/id').write_text('3')
+            with self.assertRaisesRegex(ValueError, 'L3'):
+                MODULE.validate_host_topology(root, selected=case)
+
 
 if __name__ == "__main__":
     unittest.main()

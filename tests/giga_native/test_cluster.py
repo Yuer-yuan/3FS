@@ -1,10 +1,13 @@
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import tempfile
 import tomllib
 import unittest
+from types import SimpleNamespace
 from unittest import mock
+from types import SimpleNamespace
 
 
 PROJECT = Path(__file__).resolve().parents[2]
@@ -18,6 +21,125 @@ SPEC.loader.exec_module(MODULE)
 
 
 class ClusterTest(unittest.TestCase):
+    def test_meta_readiness_requires_completed_non_discarded_routing_view(self):
+        received = 'MgmtdClient: get new routing info version 15\n'
+        completed = '[MgmtdClientOp RefreshRoutingInfo force=false No.1] succeeded. latency: 1ms\n'
+        self.assertEqual(MODULE._completed_routing_version(received), 0)
+        self.assertEqual(MODULE._completed_routing_version(received + completed), 15)
+        discarded = 'MgmtdClient: discard incomplete routing info version 15, [10003] still connecting\n'
+        self.assertEqual(MODULE._completed_routing_version(received + discarded + completed), 0)
+        self.assertEqual(MODULE._completed_routing_version(received.replace('15', '6') + completed + received), 6)
+
+    def test_partial_storage_start_cleans_all_owned_processes_and_preserves_first_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cluster = MODULE.NativeCluster.__new__(MODULE.NativeCluster)
+            cluster.roots = SimpleNamespace(bundle=root)
+            cluster.repo = root
+            cluster.config = SimpleNamespace(rpc_trace_methods=None)
+            cluster.library_path = str(root)
+            cluster.topology = MODULE.topology_module.topology('2c2s')
+            cluster.processes = []
+            cluster.mounts = []
+            cluster.ledger = MODULE.runtime.ResultLedger(root/'result.json', dict(status='running', start_order=[], stop_order=[]))
+            cluster.prepare = mock.Mock()
+            cluster._transport_records = mock.Mock(return_value=[])
+            stopped = []
+            def start():
+                for role in ('fdbserver', 'cxl-fabricd', 'mgmtd', 'meta', 'storage'):
+                    process = mock.Mock()
+                    process.receipt.role = role
+                    process.process.poll.return_value = 0
+                    process.stop.side_effect = lambda *args, r=role: stopped.append(r) or {'role': r}
+                    cluster.processes.append(process)
+                # The second OwnedProcess.start fails before returning a receipt.
+                with mock.patch.object(MODULE.runtime.OwnedProcess, 'start', side_effect=OSError('second storage failed')):
+                    cluster._start('storage-1', Path('/bin/false'), [], (16,17))
+            cluster.start = start
+            with mock.patch.object(MODULE, 'NativeCluster', return_value=cluster), mock.patch.object(MODULE.runtime, 'port_is_free', return_value=True):
+                result = MODULE.execute_cluster(None, mock.Mock())
+            self.assertEqual(result['status'], 'failed')
+            self.assertEqual(result['first_failure']['message'], 'second storage failed')
+            self.assertEqual(stopped, ['storage', 'meta', 'mgmtd', 'cxl-fabricd', 'fdbserver'])
+            self.assertTrue(result['teardown']['all_owned_processes_stopped'])
+            with mock.patch.object(MODULE.runtime, 'port_is_free', return_value=False):
+                self.assertFalse(cluster.stop()['all_owned_processes_stopped'])
+
+    def target_cluster(self, root, servers=1, overrides=None):
+        active = MODULE.NativeCluster.__new__(MODULE.NativeCluster)
+        active.topology = MODULE.topology_module.topology(f"1c{servers}s")
+        active.roots = SimpleNamespace(bundle=root / "bundle")
+        active.ledger = mock.Mock()
+        active.storage_paths = {
+            node.node_id: tuple(root / str(node.node_id) / f"data{i + 1}"
+                                for i in range(4 // servers))
+            for node in active.topology.storage_nodes
+        }
+
+        def create(arguments, role):
+            fields = {key: arguments[arguments.index(key) + 1] for key in
+                      ("--node-id", "--disk-index", "--target-id", "--chain-id")}
+            parent = active.storage_paths[int(fields["--node-id"])][int(fields["--disk-index"])]
+            directory = parent / fields["--target-id"]
+            directory.mkdir(parents=True)
+            config = dict(path=str(directory), target_id=int(fields["--target-id"]),
+                          chain_id=int(fields["--chain-id"]), only_chunk_engine=True)
+            config.update(overrides or {})
+            text = "\n".join(f"{key} = {json.dumps(value)}" for key, value in config.items()
+                             if value is not None) + "\n"
+            (directory / "target.toml").write_text(text)
+            return "target created"
+
+        active._admin = mock.Mock(side_effect=create)
+        return active
+
+    def test_native_targets_explicitly_use_and_record_upstream_chunk_engine(self):
+        for servers in (1, 2, 4):
+            with self.subTest(servers=servers), tempfile.TemporaryDirectory() as temporary:
+                active = self.target_cluster(Path(temporary), servers)
+                active._create_targets()
+                self.assertEqual(active._admin.call_count, 4)
+                placements = MODULE.storage_layout.target_placements(servers)
+                for index, (call, target) in enumerate(zip(active._admin.call_args_list, placements), 1):
+                    self.assertEqual(call.args, ([
+                        "create-target", "--node-id", str(target.node_id),
+                        "--disk-index", str(target.disk_index), "--target-id", str(target.target_id),
+                        "--chain-id", str(target.chain_id), "--use-new-chunk-engine",
+                    ], f"admin-target-{index}"))
+                proof = active.ledger.update.call_args.kwargs["storage_engine"]
+                self.assertEqual(proof["name"], "upstream-chunk-engine")
+                self.assertIs(proof["verified"], True)
+                self.assertEqual(len(proof["targets"]), 4)
+                for row in proof["targets"]:
+                    saved = active.roots.bundle / row["archive"]
+                    self.assertEqual(MODULE.runtime.sha256(saved), row["sha256"])
+                    self.assertIs(tomllib.loads(saved.read_text())["only_chunk_engine"], True)
+
+    def test_native_targets_reject_missing_false_or_non_boolean_engine_selection(self):
+        for value in (None, False, 1, "true"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as temporary:
+                active = self.target_cluster(Path(temporary), overrides={"only_chunk_engine": value})
+                with self.assertRaisesRegex(MODULE.ClusterError, "chunk engine"):
+                    active._create_targets()
+                self.assertEqual(active._admin.call_count, 1)
+                self.assertTrue((active.roots.bundle / "storage-targets/1000001001.toml").is_file())
+
+    def test_native_targets_reject_wrong_identity_or_path(self):
+        for override in ({"target_id": 123}, {"chain_id": 123}, {"path": "/unowned/target"}):
+            with self.subTest(override=override), tempfile.TemporaryDirectory() as temporary:
+                active = self.target_cluster(Path(temporary), overrides=override)
+                with self.assertRaisesRegex(MODULE.ClusterError, "target identity"):
+                    active._create_targets()
+                self.assertEqual(active._admin.call_count, 1)
+
+    def test_native_target_creation_failure_does_not_retry_or_fallback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            active = self.target_cluster(Path(temporary))
+            active._admin.side_effect = MODULE.ClusterError("target creation failed")
+            with self.assertRaisesRegex(MODULE.ClusterError, "target creation failed"):
+                active._create_targets()
+            self.assertEqual(active._admin.call_count, 1)
+
     def test_mountpoint_detection_is_exact(self):
         text = "36 25 0:31 / /dev/shm rw - tmpfs tmpfs rw\n40 36 0:45 / /dev/shm/run/mnt rw - fuse.hf3fs hf3fs rw\n"
         self.assertTrue(MODULE._mountpoint_in(text, Path("/dev/shm/run/mnt")))

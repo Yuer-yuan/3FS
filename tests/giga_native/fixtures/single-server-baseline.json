@@ -1,0 +1,505 @@
+{
+  "manifests": {
+    "1": {
+      "authorityEndpoint": 1,
+      "authorityGeneration": 1,
+      "endpointCount": 16,
+      "laneCount": 256,
+      "lifecycleRecordOffset": 1073737728,
+      "manifestSha256": "373e3eda520e27e9bc86045f96c12f200b87412aa369a7217d9ac4d30b9c5f4c",
+      "participants": [
+        {
+          "endpoint": 1,
+          "localAddress": "CXL://127.0.0.1:12499"
+        },
+        {
+          "endpoint": 2,
+          "localAddress": "CXL://127.0.0.1:12501"
+        },
+        {
+          "endpoint": 3,
+          "localAddress": "CXL://127.0.0.1:12502"
+        },
+        {
+          "endpoint": 7,
+          "localAddress": "CXL://127.0.0.1:12507"
+        },
+        {
+          "endpoint": 4,
+          "localAddress": "CXL://127.0.0.1:12503"
+        },
+        {
+          "endpoint": 16,
+          "localAddress": "CXL://127.0.0.1:12516"
+        }
+      ],
+      "ranges": [
+        {
+          "kind": "EndpointDirectory",
+          "length": 4096,
+          "offset": 4096
+        },
+        {
+          "kind": "LaneDirectory",
+          "length": 32768,
+          "offset": 8192
+        },
+        {
+          "kind": "CursorPages",
+          "length": 4194304,
+          "offset": 40960
+        },
+        {
+          "kind": "FrameRings",
+          "length": 262144,
+          "offset": 4235264
+        },
+        {
+          "kind": "RpcPayloadCells",
+          "length": 268435456,
+          "offset": 4497408
+        },
+        {
+          "kind": "AllocationDirectory",
+          "length": 262144,
+          "offset": 272932864
+        },
+        {
+          "kind": "BulkArenas",
+          "length": 800542720,
+          "offset": 273195008
+        },
+        {
+          "kind": "EvidenceCounters",
+          "length": 4096,
+          "offset": 1073737728
+        }
+      ],
+      "routes": [
+        {
+          "address": "CXL://127.0.0.1:12501",
+          "plane": "Data",
+          "targetEndpoint": 2
+        },
+        {
+          "address": "CXL://127.0.0.1:12502",
+          "plane": "Data",
+          "targetEndpoint": 3
+        },
+        {
+          "address": "CXL://127.0.0.1:12503",
+          "plane": "Data",
+          "targetEndpoint": 4
+        }
+      ],
+      "schema": "hf3fs.cxl-runtime-manifest.v1",
+      "sessionGeneration": 7,
+      "totalRegionBytes": 1073741824
+    },
+    "2": {
+      "authorityEndpoint": 1,
+      "authorityGeneration": 1,
+      "endpointCount": 17,
+      "laneCount": 256,
+      "lifecycleRecordOffset": 1073737728,
+      "manifestSha256": "aa9e0b2fd3f9bb731ed96486201eba066bb02f54e74698b8b43e7507a3ab2f19",
+      "participants": [
+        {
+          "endpoint": 1,
+          "localAddress": "CXL://127.0.0.1:12499"
+        },
+        {
+          "endpoint": 2,
+          "localAddress": "CXL://127.0.0.1:12501"
+        },
+        {
+          "endpoint": 3,
+          "localAddress": "CXL://127.0.0.1:12502"
+        },
+        {
+          "endpoint": 7,
+          "localAddress": "CXL://127.0.0.1:12507"
+        },
+        {
+          "endpoint": 4,
+          "localAddress": "CXL://127.0.0.1:12503"
+        },
+        {
+          "endpoint": 16,
+          "localAddress": "CXL://127.0.0.1:12516"
+        },
+        {
+          "endpoint": 17,
+          "localAddress": "CXL://127.0.0.1:12517"
+        }
+      ],
+      "ranges": [
+        {
+          "kind": "EndpointDirectory",
+          "length": 4096,
+          "offset": 4096
+        },
+        {
+          "kind": "LaneDirectory",
+          "length": 32768,
+          "offset": 8192
+        },
+        {
+          "kind": "CursorPages",
+          "length": 4194304,
+          "offset": 40960
+        },
+        {
+          "kind": "FrameRings",
+          "length": 262144,
+          "offset": 4235264
+        },
+        {
+          "kind": "RpcPayloadCells",
+          "length": 268435456,
+          "offset": 4497408
+        },
+        {
+          "kind": "AllocationDirectory",
+          "length": 278528,
+          "offset": 272932864
+        },
+        {
+          "kind": "BulkArenas",
+          "length": 800526336,
+          "offset": 273211392
+        },
+        {
+          "kind": "EvidenceCounters",
+          "length": 4096,
+          "offset": 1073737728
+        }
+      ],
+      "routes": [
+        {
+          "address": "CXL://127.0.0.1:12501",
+          "plane": "Data",
+          "targetEndpoint": 2
+        },
+        {
+          "address": "CXL://127.0.0.1:12502",
+          "plane": "Data",
+          "targetEndpoint": 3
+        },
+        {
+          "address": "CXL://127.0.0.1:12503",
+          "plane": "Data",
+          "targetEndpoint": 4
+        }
+      ],
+      "schema": "hf3fs.cxl-runtime-manifest.v1",
+      "sessionGeneration": 7,
+      "totalRegionBytes": 1073741824
+    },
+    "3": {
+      "authorityEndpoint": 1,
+      "authorityGeneration": 1,
+      "endpointCount": 18,
+      "laneCount": 256,
+      "lifecycleRecordOffset": 1073737728,
+      "manifestSha256": "6b3c1ab5f8acf0af75c27356ec1954a9aa3883e48769ebdc1a07a5908fa08c76",
+      "participants": [
+        {
+          "endpoint": 1,
+          "localAddress": "CXL://127.0.0.1:12499"
+        },
+        {
+          "endpoint": 2,
+          "localAddress": "CXL://127.0.0.1:12501"
+        },
+        {
+          "endpoint": 3,
+          "localAddress": "CXL://127.0.0.1:12502"
+        },
+        {
+          "endpoint": 7,
+          "localAddress": "CXL://127.0.0.1:12507"
+        },
+        {
+          "endpoint": 4,
+          "localAddress": "CXL://127.0.0.1:12503"
+        },
+        {
+          "endpoint": 16,
+          "localAddress": "CXL://127.0.0.1:12516"
+        },
+        {
+          "endpoint": 17,
+          "localAddress": "CXL://127.0.0.1:12517"
+        },
+        {
+          "endpoint": 18,
+          "localAddress": "CXL://127.0.0.1:12518"
+        }
+      ],
+      "ranges": [
+        {
+          "kind": "EndpointDirectory",
+          "length": 4096,
+          "offset": 4096
+        },
+        {
+          "kind": "LaneDirectory",
+          "length": 32768,
+          "offset": 8192
+        },
+        {
+          "kind": "CursorPages",
+          "length": 4194304,
+          "offset": 40960
+        },
+        {
+          "kind": "FrameRings",
+          "length": 262144,
+          "offset": 4235264
+        },
+        {
+          "kind": "RpcPayloadCells",
+          "length": 268435456,
+          "offset": 4497408
+        },
+        {
+          "kind": "AllocationDirectory",
+          "length": 294912,
+          "offset": 272932864
+        },
+        {
+          "kind": "BulkArenas",
+          "length": 800509952,
+          "offset": 273227776
+        },
+        {
+          "kind": "EvidenceCounters",
+          "length": 4096,
+          "offset": 1073737728
+        }
+      ],
+      "routes": [
+        {
+          "address": "CXL://127.0.0.1:12501",
+          "plane": "Data",
+          "targetEndpoint": 2
+        },
+        {
+          "address": "CXL://127.0.0.1:12502",
+          "plane": "Data",
+          "targetEndpoint": 3
+        },
+        {
+          "address": "CXL://127.0.0.1:12503",
+          "plane": "Data",
+          "targetEndpoint": 4
+        }
+      ],
+      "schema": "hf3fs.cxl-runtime-manifest.v1",
+      "sessionGeneration": 7,
+      "totalRegionBytes": 1073741824
+    }
+  },
+  "rendered": {
+    "1/0": {
+      "admin_cli.toml": "3f24ccb20145ed674413b489c774c0a6c722fe469bfe0c526ff173f4a8369d99",
+      "authority.lock": "58f698497b9210bc2ec60dec8850b215f4f3bac5e22b8cea6ae8ae35d7e8e887",
+      "chain-table.csv": "50b25506f58cb94a9499536fafa8fd43c201febf70fe50f6544bfaadba339d0c",
+      "chains.csv": "bfa3a1b8b8c457a44037548b6cd7dbfbbe308d0d5928b8082f2b8300c78130c2",
+      "cxl-fabricd.toml": "ba38d6cab752771c652571ac73746a4ae859a8ee9d53dc5822e9b4b0e99c200f",
+      "hf3fs_fuse_main.toml": "439c1432a182ec2a1453c2a39864ad034ea21bffb3e80e2f991be99eabc9b0e4",
+      "hf3fs_fuse_main_launcher.toml": "2856363cccff09968663453b6d85b971dd87dd8f0f5124eea9b6332b21867344",
+      "manifest.json": "504ba10a48171d2f0e6154db775fab20aac45b9b504f8351247b25db41b212be",
+      "meta_bench.toml": "569e82cb541ee4cc357e55350158597048d1144cac484933732d8cec28175b3c",
+      "meta_main.toml": "77a452f786fab77fb4ebb7a8614334081a1f584229822c9d97c300e60864c84b",
+      "meta_main_app.toml": "5148b9064846010e146277beb412b596479d0d743251299488982e2eb7364cef",
+      "meta_main_launcher.toml": "fcf13014751dc147cc3bc37cd242972f56f56aa057458245bbfce67585c4067b",
+      "mgmtd_main.toml": "604dd702481897ecaacc8b0b8792188c024dce4495f79b69cfde2c5d1391dcd6",
+      "mgmtd_main_app.toml": "58323f28fad622ace0c8c5427d46ab0f5e1eea089bbad39353358a11efa02951",
+      "mgmtd_main_launcher.toml": "9395fc690f06eadc042b51df14fc655a3a3a477dcd2bd7385dcc76b4b7701227",
+      "pjdfstest.toml": "c18e03cba434aebfc7593c1b9a7f257dc9f30a6019f9bf5b4a9f509dc65c1cbd",
+      "storage_main.toml": "6e633303b3aa7805106148704b0f7d0cefd59bb0a1a3fac46e2d1830d3dba20e",
+      "storage_main_app.toml": "907f6938dd146a8ce266a067615ca6f5ae7c89d5723fb2009c4ebc7011752804",
+      "storage_main_launcher.toml": "57f1c86819a1337ec04233514020e2747fcc7492904e0a7dd03c08697562e667",
+      "token": "9d41062d0ef188b3ff9e6f20648a9e9aa487bf60b0437588e30e02923d1b25c4"
+    },
+    "1/1": {
+      "admin_cli.toml": "53b445c994b9f9caa61908cedb30e5f3fe6b86e70201a21c3722bbc636226e57",
+      "authority.lock": "58f698497b9210bc2ec60dec8850b215f4f3bac5e22b8cea6ae8ae35d7e8e887",
+      "chain-table.csv": "50b25506f58cb94a9499536fafa8fd43c201febf70fe50f6544bfaadba339d0c",
+      "chains.csv": "bfa3a1b8b8c457a44037548b6cd7dbfbbe308d0d5928b8082f2b8300c78130c2",
+      "cxl-fabricd.toml": "ba38d6cab752771c652571ac73746a4ae859a8ee9d53dc5822e9b4b0e99c200f",
+      "hf3fs_fuse_main.toml": "c18e02893ee900e1de6105e6a85f083d8113f9c683da8482083f6668fd08fea4",
+      "hf3fs_fuse_main_launcher.toml": "d327c0280d58f2b56d89a0a114b620e66d0324fb5078c9fcf7b6b6b106f55399",
+      "manifest.json": "504ba10a48171d2f0e6154db775fab20aac45b9b504f8351247b25db41b212be",
+      "meta_bench.toml": "569e82cb541ee4cc357e55350158597048d1144cac484933732d8cec28175b3c",
+      "meta_main.toml": "e868a9133ebfdfa8d7b5f016438b7db3d7b15320f001e4965d5dc57a8a0eb6fe",
+      "meta_main_app.toml": "5148b9064846010e146277beb412b596479d0d743251299488982e2eb7364cef",
+      "meta_main_launcher.toml": "fcf13014751dc147cc3bc37cd242972f56f56aa057458245bbfce67585c4067b",
+      "mgmtd_main.toml": "1caed0a77098bb542e65b02b645f6b0eb00a1e41f113fcee29768847b7e9f450",
+      "mgmtd_main_app.toml": "58323f28fad622ace0c8c5427d46ab0f5e1eea089bbad39353358a11efa02951",
+      "mgmtd_main_launcher.toml": "9395fc690f06eadc042b51df14fc655a3a3a477dcd2bd7385dcc76b4b7701227",
+      "pjdfstest.toml": "c18e03cba434aebfc7593c1b9a7f257dc9f30a6019f9bf5b4a9f509dc65c1cbd",
+      "storage_main.toml": "08f6744d8cfd8e5651a8e285b3e69de6816b20d33d6141fe5218eff421d89261",
+      "storage_main_app.toml": "907f6938dd146a8ce266a067615ca6f5ae7c89d5723fb2009c4ebc7011752804",
+      "storage_main_launcher.toml": "57f1c86819a1337ec04233514020e2747fcc7492904e0a7dd03c08697562e667",
+      "token": "9d41062d0ef188b3ff9e6f20648a9e9aa487bf60b0437588e30e02923d1b25c4"
+    },
+    "2/0": {
+      "admin_cli.toml": "3f24ccb20145ed674413b489c774c0a6c722fe469bfe0c526ff173f4a8369d99",
+      "authority.lock": "58f698497b9210bc2ec60dec8850b215f4f3bac5e22b8cea6ae8ae35d7e8e887",
+      "chain-table.csv": "50b25506f58cb94a9499536fafa8fd43c201febf70fe50f6544bfaadba339d0c",
+      "chains.csv": "bfa3a1b8b8c457a44037548b6cd7dbfbbe308d0d5928b8082f2b8300c78130c2",
+      "cxl-fabricd.toml": "ba38d6cab752771c652571ac73746a4ae859a8ee9d53dc5822e9b4b0e99c200f",
+      "hf3fs_fuse_main.toml": "439c1432a182ec2a1453c2a39864ad034ea21bffb3e80e2f991be99eabc9b0e4",
+      "hf3fs_fuse_main_launcher.toml": "2856363cccff09968663453b6d85b971dd87dd8f0f5124eea9b6332b21867344",
+      "manifest.json": "650d845ed2dd565e3488e1caca87a16d3a72e00bbb4afa60e93032748d34b4b8",
+      "meta_bench.toml": "569e82cb541ee4cc357e55350158597048d1144cac484933732d8cec28175b3c",
+      "meta_main.toml": "77a452f786fab77fb4ebb7a8614334081a1f584229822c9d97c300e60864c84b",
+      "meta_main_app.toml": "5148b9064846010e146277beb412b596479d0d743251299488982e2eb7364cef",
+      "meta_main_launcher.toml": "fcf13014751dc147cc3bc37cd242972f56f56aa057458245bbfce67585c4067b",
+      "mgmtd_main.toml": "604dd702481897ecaacc8b0b8792188c024dce4495f79b69cfde2c5d1391dcd6",
+      "mgmtd_main_app.toml": "58323f28fad622ace0c8c5427d46ab0f5e1eea089bbad39353358a11efa02951",
+      "mgmtd_main_launcher.toml": "9395fc690f06eadc042b51df14fc655a3a3a477dcd2bd7385dcc76b4b7701227",
+      "pjdfstest.toml": "c18e03cba434aebfc7593c1b9a7f257dc9f30a6019f9bf5b4a9f509dc65c1cbd",
+      "storage_main.toml": "6e633303b3aa7805106148704b0f7d0cefd59bb0a1a3fac46e2d1830d3dba20e",
+      "storage_main_app.toml": "907f6938dd146a8ce266a067615ca6f5ae7c89d5723fb2009c4ebc7011752804",
+      "storage_main_launcher.toml": "57f1c86819a1337ec04233514020e2747fcc7492904e0a7dd03c08697562e667",
+      "token": "9d41062d0ef188b3ff9e6f20648a9e9aa487bf60b0437588e30e02923d1b25c4"
+    },
+    "2/1": {
+      "admin_cli.toml": "53b445c994b9f9caa61908cedb30e5f3fe6b86e70201a21c3722bbc636226e57",
+      "authority.lock": "58f698497b9210bc2ec60dec8850b215f4f3bac5e22b8cea6ae8ae35d7e8e887",
+      "chain-table.csv": "50b25506f58cb94a9499536fafa8fd43c201febf70fe50f6544bfaadba339d0c",
+      "chains.csv": "bfa3a1b8b8c457a44037548b6cd7dbfbbe308d0d5928b8082f2b8300c78130c2",
+      "cxl-fabricd.toml": "ba38d6cab752771c652571ac73746a4ae859a8ee9d53dc5822e9b4b0e99c200f",
+      "hf3fs_fuse_main.toml": "c18e02893ee900e1de6105e6a85f083d8113f9c683da8482083f6668fd08fea4",
+      "hf3fs_fuse_main_launcher.toml": "d327c0280d58f2b56d89a0a114b620e66d0324fb5078c9fcf7b6b6b106f55399",
+      "manifest.json": "650d845ed2dd565e3488e1caca87a16d3a72e00bbb4afa60e93032748d34b4b8",
+      "meta_bench.toml": "569e82cb541ee4cc357e55350158597048d1144cac484933732d8cec28175b3c",
+      "meta_main.toml": "e868a9133ebfdfa8d7b5f016438b7db3d7b15320f001e4965d5dc57a8a0eb6fe",
+      "meta_main_app.toml": "5148b9064846010e146277beb412b596479d0d743251299488982e2eb7364cef",
+      "meta_main_launcher.toml": "fcf13014751dc147cc3bc37cd242972f56f56aa057458245bbfce67585c4067b",
+      "mgmtd_main.toml": "1caed0a77098bb542e65b02b645f6b0eb00a1e41f113fcee29768847b7e9f450",
+      "mgmtd_main_app.toml": "58323f28fad622ace0c8c5427d46ab0f5e1eea089bbad39353358a11efa02951",
+      "mgmtd_main_launcher.toml": "9395fc690f06eadc042b51df14fc655a3a3a477dcd2bd7385dcc76b4b7701227",
+      "pjdfstest.toml": "c18e03cba434aebfc7593c1b9a7f257dc9f30a6019f9bf5b4a9f509dc65c1cbd",
+      "storage_main.toml": "08f6744d8cfd8e5651a8e285b3e69de6816b20d33d6141fe5218eff421d89261",
+      "storage_main_app.toml": "907f6938dd146a8ce266a067615ca6f5ae7c89d5723fb2009c4ebc7011752804",
+      "storage_main_launcher.toml": "57f1c86819a1337ec04233514020e2747fcc7492904e0a7dd03c08697562e667",
+      "token": "9d41062d0ef188b3ff9e6f20648a9e9aa487bf60b0437588e30e02923d1b25c4"
+    },
+    "2/2": {
+      "admin_cli.toml": "0c5e9b7149ad60cdc352ca740ad57761bfb032c9921793e9beceec16f7017800",
+      "authority.lock": "58f698497b9210bc2ec60dec8850b215f4f3bac5e22b8cea6ae8ae35d7e8e887",
+      "chain-table.csv": "50b25506f58cb94a9499536fafa8fd43c201febf70fe50f6544bfaadba339d0c",
+      "chains.csv": "bfa3a1b8b8c457a44037548b6cd7dbfbbe308d0d5928b8082f2b8300c78130c2",
+      "cxl-fabricd.toml": "ba38d6cab752771c652571ac73746a4ae859a8ee9d53dc5822e9b4b0e99c200f",
+      "hf3fs_fuse_main.toml": "b2960f04362ec99934640ed6521630789f7ec73213f80561c57b5c597fe593a8",
+      "hf3fs_fuse_main_launcher.toml": "28290d6339257cdfe8d49ece5821d4bd226d58dd001b759580a6d2b59c3fc176",
+      "manifest.json": "650d845ed2dd565e3488e1caca87a16d3a72e00bbb4afa60e93032748d34b4b8",
+      "meta_bench.toml": "569e82cb541ee4cc357e55350158597048d1144cac484933732d8cec28175b3c",
+      "meta_main.toml": "a30afa4773e5e07fceed1cf4b6232524dc053ff08a40a817fae7ad9f6ca8e932",
+      "meta_main_app.toml": "5148b9064846010e146277beb412b596479d0d743251299488982e2eb7364cef",
+      "meta_main_launcher.toml": "fcf13014751dc147cc3bc37cd242972f56f56aa057458245bbfce67585c4067b",
+      "mgmtd_main.toml": "68886337f08ed617a68abf4800c1a5b4268ee493d2fd453bc82849611cfe4d7e",
+      "mgmtd_main_app.toml": "58323f28fad622ace0c8c5427d46ab0f5e1eea089bbad39353358a11efa02951",
+      "mgmtd_main_launcher.toml": "9395fc690f06eadc042b51df14fc655a3a3a477dcd2bd7385dcc76b4b7701227",
+      "pjdfstest.toml": "c18e03cba434aebfc7593c1b9a7f257dc9f30a6019f9bf5b4a9f509dc65c1cbd",
+      "storage_main.toml": "27ae384472921d2ea588963d29f94f65c6eb6a3b77274483756a9b9f19c398c6",
+      "storage_main_app.toml": "907f6938dd146a8ce266a067615ca6f5ae7c89d5723fb2009c4ebc7011752804",
+      "storage_main_launcher.toml": "57f1c86819a1337ec04233514020e2747fcc7492904e0a7dd03c08697562e667",
+      "token": "9d41062d0ef188b3ff9e6f20648a9e9aa487bf60b0437588e30e02923d1b25c4"
+    },
+    "3/0": {
+      "admin_cli.toml": "3f24ccb20145ed674413b489c774c0a6c722fe469bfe0c526ff173f4a8369d99",
+      "authority.lock": "58f698497b9210bc2ec60dec8850b215f4f3bac5e22b8cea6ae8ae35d7e8e887",
+      "chain-table.csv": "50b25506f58cb94a9499536fafa8fd43c201febf70fe50f6544bfaadba339d0c",
+      "chains.csv": "bfa3a1b8b8c457a44037548b6cd7dbfbbe308d0d5928b8082f2b8300c78130c2",
+      "cxl-fabricd.toml": "ba38d6cab752771c652571ac73746a4ae859a8ee9d53dc5822e9b4b0e99c200f",
+      "hf3fs_fuse_main.toml": "439c1432a182ec2a1453c2a39864ad034ea21bffb3e80e2f991be99eabc9b0e4",
+      "hf3fs_fuse_main_launcher.toml": "2856363cccff09968663453b6d85b971dd87dd8f0f5124eea9b6332b21867344",
+      "manifest.json": "cb6b444d54c7ad35b14c231edba609de573e4ff1f5515fef26f8b1808aa13780",
+      "meta_bench.toml": "569e82cb541ee4cc357e55350158597048d1144cac484933732d8cec28175b3c",
+      "meta_main.toml": "77a452f786fab77fb4ebb7a8614334081a1f584229822c9d97c300e60864c84b",
+      "meta_main_app.toml": "5148b9064846010e146277beb412b596479d0d743251299488982e2eb7364cef",
+      "meta_main_launcher.toml": "fcf13014751dc147cc3bc37cd242972f56f56aa057458245bbfce67585c4067b",
+      "mgmtd_main.toml": "604dd702481897ecaacc8b0b8792188c024dce4495f79b69cfde2c5d1391dcd6",
+      "mgmtd_main_app.toml": "58323f28fad622ace0c8c5427d46ab0f5e1eea089bbad39353358a11efa02951",
+      "mgmtd_main_launcher.toml": "9395fc690f06eadc042b51df14fc655a3a3a477dcd2bd7385dcc76b4b7701227",
+      "pjdfstest.toml": "c18e03cba434aebfc7593c1b9a7f257dc9f30a6019f9bf5b4a9f509dc65c1cbd",
+      "storage_main.toml": "6e633303b3aa7805106148704b0f7d0cefd59bb0a1a3fac46e2d1830d3dba20e",
+      "storage_main_app.toml": "907f6938dd146a8ce266a067615ca6f5ae7c89d5723fb2009c4ebc7011752804",
+      "storage_main_launcher.toml": "57f1c86819a1337ec04233514020e2747fcc7492904e0a7dd03c08697562e667",
+      "token": "9d41062d0ef188b3ff9e6f20648a9e9aa487bf60b0437588e30e02923d1b25c4"
+    },
+    "3/1": {
+      "admin_cli.toml": "53b445c994b9f9caa61908cedb30e5f3fe6b86e70201a21c3722bbc636226e57",
+      "authority.lock": "58f698497b9210bc2ec60dec8850b215f4f3bac5e22b8cea6ae8ae35d7e8e887",
+      "chain-table.csv": "50b25506f58cb94a9499536fafa8fd43c201febf70fe50f6544bfaadba339d0c",
+      "chains.csv": "bfa3a1b8b8c457a44037548b6cd7dbfbbe308d0d5928b8082f2b8300c78130c2",
+      "cxl-fabricd.toml": "ba38d6cab752771c652571ac73746a4ae859a8ee9d53dc5822e9b4b0e99c200f",
+      "hf3fs_fuse_main.toml": "c18e02893ee900e1de6105e6a85f083d8113f9c683da8482083f6668fd08fea4",
+      "hf3fs_fuse_main_launcher.toml": "d327c0280d58f2b56d89a0a114b620e66d0324fb5078c9fcf7b6b6b106f55399",
+      "manifest.json": "cb6b444d54c7ad35b14c231edba609de573e4ff1f5515fef26f8b1808aa13780",
+      "meta_bench.toml": "569e82cb541ee4cc357e55350158597048d1144cac484933732d8cec28175b3c",
+      "meta_main.toml": "e868a9133ebfdfa8d7b5f016438b7db3d7b15320f001e4965d5dc57a8a0eb6fe",
+      "meta_main_app.toml": "5148b9064846010e146277beb412b596479d0d743251299488982e2eb7364cef",
+      "meta_main_launcher.toml": "fcf13014751dc147cc3bc37cd242972f56f56aa057458245bbfce67585c4067b",
+      "mgmtd_main.toml": "1caed0a77098bb542e65b02b645f6b0eb00a1e41f113fcee29768847b7e9f450",
+      "mgmtd_main_app.toml": "58323f28fad622ace0c8c5427d46ab0f5e1eea089bbad39353358a11efa02951",
+      "mgmtd_main_launcher.toml": "9395fc690f06eadc042b51df14fc655a3a3a477dcd2bd7385dcc76b4b7701227",
+      "pjdfstest.toml": "c18e03cba434aebfc7593c1b9a7f257dc9f30a6019f9bf5b4a9f509dc65c1cbd",
+      "storage_main.toml": "08f6744d8cfd8e5651a8e285b3e69de6816b20d33d6141fe5218eff421d89261",
+      "storage_main_app.toml": "907f6938dd146a8ce266a067615ca6f5ae7c89d5723fb2009c4ebc7011752804",
+      "storage_main_launcher.toml": "57f1c86819a1337ec04233514020e2747fcc7492904e0a7dd03c08697562e667",
+      "token": "9d41062d0ef188b3ff9e6f20648a9e9aa487bf60b0437588e30e02923d1b25c4"
+    },
+    "3/2": {
+      "admin_cli.toml": "0c5e9b7149ad60cdc352ca740ad57761bfb032c9921793e9beceec16f7017800",
+      "authority.lock": "58f698497b9210bc2ec60dec8850b215f4f3bac5e22b8cea6ae8ae35d7e8e887",
+      "chain-table.csv": "50b25506f58cb94a9499536fafa8fd43c201febf70fe50f6544bfaadba339d0c",
+      "chains.csv": "bfa3a1b8b8c457a44037548b6cd7dbfbbe308d0d5928b8082f2b8300c78130c2",
+      "cxl-fabricd.toml": "ba38d6cab752771c652571ac73746a4ae859a8ee9d53dc5822e9b4b0e99c200f",
+      "hf3fs_fuse_main.toml": "b2960f04362ec99934640ed6521630789f7ec73213f80561c57b5c597fe593a8",
+      "hf3fs_fuse_main_launcher.toml": "28290d6339257cdfe8d49ece5821d4bd226d58dd001b759580a6d2b59c3fc176",
+      "manifest.json": "cb6b444d54c7ad35b14c231edba609de573e4ff1f5515fef26f8b1808aa13780",
+      "meta_bench.toml": "569e82cb541ee4cc357e55350158597048d1144cac484933732d8cec28175b3c",
+      "meta_main.toml": "a30afa4773e5e07fceed1cf4b6232524dc053ff08a40a817fae7ad9f6ca8e932",
+      "meta_main_app.toml": "5148b9064846010e146277beb412b596479d0d743251299488982e2eb7364cef",
+      "meta_main_launcher.toml": "fcf13014751dc147cc3bc37cd242972f56f56aa057458245bbfce67585c4067b",
+      "mgmtd_main.toml": "68886337f08ed617a68abf4800c1a5b4268ee493d2fd453bc82849611cfe4d7e",
+      "mgmtd_main_app.toml": "58323f28fad622ace0c8c5427d46ab0f5e1eea089bbad39353358a11efa02951",
+      "mgmtd_main_launcher.toml": "9395fc690f06eadc042b51df14fc655a3a3a477dcd2bd7385dcc76b4b7701227",
+      "pjdfstest.toml": "c18e03cba434aebfc7593c1b9a7f257dc9f30a6019f9bf5b4a9f509dc65c1cbd",
+      "storage_main.toml": "27ae384472921d2ea588963d29f94f65c6eb6a3b77274483756a9b9f19c398c6",
+      "storage_main_app.toml": "907f6938dd146a8ce266a067615ca6f5ae7c89d5723fb2009c4ebc7011752804",
+      "storage_main_launcher.toml": "57f1c86819a1337ec04233514020e2747fcc7492904e0a7dd03c08697562e667",
+      "token": "9d41062d0ef188b3ff9e6f20648a9e9aa487bf60b0437588e30e02923d1b25c4"
+    },
+    "3/3": {
+      "admin_cli.toml": "3fd84cab886e2f48a6f7982a351b9700b1bec19e1bc5e060e28d27ddedd706c0",
+      "authority.lock": "58f698497b9210bc2ec60dec8850b215f4f3bac5e22b8cea6ae8ae35d7e8e887",
+      "chain-table.csv": "50b25506f58cb94a9499536fafa8fd43c201febf70fe50f6544bfaadba339d0c",
+      "chains.csv": "bfa3a1b8b8c457a44037548b6cd7dbfbbe308d0d5928b8082f2b8300c78130c2",
+      "cxl-fabricd.toml": "ba38d6cab752771c652571ac73746a4ae859a8ee9d53dc5822e9b4b0e99c200f",
+      "hf3fs_fuse_main.toml": "ad77d9b6f7405ae4673f58771fe97e513772b45713dde008273e4228e820437e",
+      "hf3fs_fuse_main_launcher.toml": "b2e261b2e6155a9e75626c68778dcb4530294698ba9fc0b033d9578987a8747d",
+      "manifest.json": "cb6b444d54c7ad35b14c231edba609de573e4ff1f5515fef26f8b1808aa13780",
+      "meta_bench.toml": "569e82cb541ee4cc357e55350158597048d1144cac484933732d8cec28175b3c",
+      "meta_main.toml": "ca9f2a473c4724d39d5a282c5c381b889c983c0bd20b5af8119598aeb3c1326e",
+      "meta_main_app.toml": "5148b9064846010e146277beb412b596479d0d743251299488982e2eb7364cef",
+      "meta_main_launcher.toml": "fcf13014751dc147cc3bc37cd242972f56f56aa057458245bbfce67585c4067b",
+      "mgmtd_main.toml": "ec9a00785bf31fc2f718f81c414eb9fe0bc36357025733543f35f4ff8704c4b9",
+      "mgmtd_main_app.toml": "58323f28fad622ace0c8c5427d46ab0f5e1eea089bbad39353358a11efa02951",
+      "mgmtd_main_launcher.toml": "9395fc690f06eadc042b51df14fc655a3a3a477dcd2bd7385dcc76b4b7701227",
+      "pjdfstest.toml": "c18e03cba434aebfc7593c1b9a7f257dc9f30a6019f9bf5b4a9f509dc65c1cbd",
+      "storage_main.toml": "e5fa24005ac18db223afd724ed071fee308d3dba40ce6b29c26b5577ba260c6f",
+      "storage_main_app.toml": "907f6938dd146a8ce266a067615ca6f5ae7c89d5723fb2009c4ebc7011752804",
+      "storage_main_launcher.toml": "57f1c86819a1337ec04233514020e2747fcc7492904e0a7dd03c08697562e667",
+      "token": "9d41062d0ef188b3ff9e6f20648a9e9aa487bf60b0437588e30e02923d1b25c4"
+    }
+  },
+  "source_commit": "6197e74dce6a38ee691b23a7281c7b8ae6c6fc72"
+}

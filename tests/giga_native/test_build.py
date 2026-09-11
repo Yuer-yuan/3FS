@@ -18,6 +18,16 @@ SPEC.loader.exec_module(MODULE)
 
 
 class BuildTest(unittest.TestCase):
+    def test_native_cargo_compiler_environment_uses_linux_core_id_path(self):
+        environment = MODULE.native_compiler_environment({"PATH": "/tools", "UNRELATED": "keep"}, 2)
+        self.assertEqual(environment["CXX"], "/usr/bin/clang++-18")
+        self.assertIn("--gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/13", environment["CXXFLAGS"])
+        self.assertIn("-DROCKSDB_SCHED_GETCPU_PRESENT=1", environment["CXXFLAGS"])
+        self.assertEqual(environment["CARGO_BUILD_JOBS"], "2")
+        self.assertEqual(environment["UNRELATED"], "keep")
+        with self.assertRaises(ValueError):
+            MODULE.native_compiler_environment({}, 0)
+
     def test_liburing_compat_does_not_redefine_open_how(self):
         include = PROJECT / "third_party/liburing-cmake"
         completed = subprocess.run(

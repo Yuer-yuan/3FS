@@ -172,6 +172,10 @@ struct DirHandle {
   size_t dirId;
   pid_t pid;
   bool iovDir;
+  std::mutex cxlIovMutex{};
+  bool cxlIovControl{false};
+  bool cxlIovCreator{false};
+  std::shared_ptr<lib::ShmBuf> cxlIov;
 };
 
 struct DirEntryVector {

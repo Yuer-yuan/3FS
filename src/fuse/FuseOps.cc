@@ -28,6 +28,8 @@
 
 #include "common/monitor/Recorder.h"
 #include "common/monitor/Sample.h"
+#include "common/net/TransportRuntime.h"
+#include "client/storage/IOBufferStats.h"
 #include "common/serde/Serde.h"
 #include "common/utils/Coroutine.h"
 #include "common/utils/OptionalUtils.h"
@@ -1780,11 +1782,15 @@ void hf3fs_opendir(fuse_req_t req, fuse_ino_t fino, struct fuse_file_info *fi) {
   XLOGF(OP_LOG_LEVEL, "hf3fs_opendir(ino={}, pid={})", ino, fuse_req_ctx(req)->pid);
   record("opendir", fuse_req_ctx(req)->uid);
 
-  fi->fh = (uintptr_t) new DirHandle{d.dirHandle.fetch_add(1), fuse_req_ctx(req)->pid, false};
+  fi->fh = (uintptr_t) new DirHandle{.dirId = d.dirHandle.fetch_add(1),
+                                    .pid = fuse_req_ctx(req)->pid,
+                                    .iovDir = false,
+                                    .cxlIov = {}};
 
   auto dname = checkVirtDir(ino);
   if (dname && *dname == "iovs") {
     ((DirHandle *)fi->fh)->iovDir = true;
+    ((DirHandle *)fi->fh)->cxlIovControl = (fi->flags & O_NONBLOCK) != 0;
   }
 
   fuse_reply_open(req, fi);
@@ -1814,7 +1820,13 @@ void hf3fs_releasedir(fuse_req_t req, fuse_ino_t fino, struct fuse_file_info *fi
     }
   }
 
-  if (dh->iovDir) {
+  if (dh->cxlIovControl) {
+    if (dh->cxlIovCreator && dh->cxlIov) {
+      auto &iov = dh->cxlIov;
+      // Other open leases and in-flight I/O retain their own shared owners.
+      (void)d.iovs.rmIov(iov->key.c_str(), meta::UserInfo{iov->user, meta::Gid{iov->user.toUnderType()}});
+    }
+  } else if (dh->iovDir) {
     // releasedir() is called only the last process with the inherited fd closes it or exits
     auto &iovs = *d.iovs.iovs;
     auto n = iovs.slots.nextAvail.load();
@@ -1930,6 +1942,74 @@ void hf3fs_ioctl(fuse_req_t req,
 
   auto userInfo = UserInfo(flat::Uid(fuse_req_ctx(req)->uid), flat::Gid(fuse_req_ctx(req)->gid), d.fuseToken);
   switch (cmd) {
+    case hf3fs::lib::fuse::HF3FS_IOC_IOBUFFER_COPY_STATS: {
+      if (fuse_req_ctx(req)->uid != 0 || out_bufsz != sizeof(uint64_t) * 2) {
+        fuse_reply_err(req, EACCES);
+        break;
+      }
+      auto stats = storage::client::ioBufferCopyStats();
+      const uint64_t result[] = {stats.inBytes, stats.outBytes};
+      fuse_reply_ioctl(req, 0, result, sizeof(result));
+      break;
+    }
+    case hf3fs::lib::fuse::HF3FS_IOC_CXL_IOV_CREATE:
+    case hf3fs::lib::fuse::HF3FS_IOC_CXL_IOV_OPEN: {
+      using Arg = hf3fs::lib::fuse::Hf3fsIoctlCxlIov;
+      auto directory = checkVirtDir(ino);
+      if (!directory || *directory != "iovs" || !fi || !fi->fh ||
+          !(flags & FUSE_IOCTL_DIR) || !((DirHandle *)fi->fh)->cxlIovControl) {
+        fuse_reply_err(req, EINVAL);
+        break;
+      }
+      // The caller opens the fabric itself. Never grant an untrusted process
+      // access to a whole fabric fd in place of a restricted mapping object.
+      if (fuse_req_ctx(req)->uid != 0) {
+        fuse_reply_err(req, EACCES);
+        break;
+      }
+      auto dh = (DirHandle *)fi->fh;
+      std::lock_guard lock(dh->cxlIovMutex);
+      if (in_bufsz != sizeof(Arg) || out_bufsz != sizeof(Arg) || dh->cxlIov) {
+        fuse_reply_err(req, EINVAL);
+        break;
+      }
+      auto fabric = net::TransportRuntime::cxlFabric();
+      if (!fabric || !fabric->acceptingSubmissions() ||
+          fabric->config().regionType != net::cxl::CxlFabric::RegionType::File) {
+        fuse_reply_err(req, EOPNOTSUPP);
+        break;
+      }
+      Arg result{};
+      std::memcpy(&result, in_buf, sizeof(result));
+      const auto path = fabric->config().regionPath.string();
+      struct stat st{};
+      if (path.size() >= sizeof(result.path) || fstat(fabric->region().fd(), &st) || !S_ISREG(st.st_mode)) {
+        fuse_reply_err(req, EIO);
+        break;
+      }
+      Uuid id;
+      std::memcpy(id.bytes(), result.id, sizeof(result.id));
+      const bool creating = cmd == hf3fs::lib::fuse::HF3FS_IOC_CXL_IOV_CREATE;
+      auto shm = creating ? d.iovs.createCxlIov(result.size, result.blockSize, fuse_req_ctx(req)->pid, userInfo)
+                          : d.iovs.openCxlIov(id, result.size, result.blockSize, userInfo);
+      if (!shm) {
+        handle_error(req, shm);
+        break;
+      }
+      dh->cxlIov = *shm;
+      dh->cxlIovCreator = creating;
+      result.offset = (*shm)->bufStart - reinterpret_cast<uint8_t *>(fabric->region().bytes().data()) +
+                      fabric->config().regionOffset;
+      result.device = st.st_dev;
+      result.inode = st.st_ino;
+      std::memcpy(result.id, (*shm)->id.bytes(), sizeof(result.id));
+      std::memset(result.path, 0, sizeof(result.path));
+      std::memcpy(result.path, path.data(), path.size());
+      XLOGF(INFO, "HF3FS_CXL_NATIVE_IOV {} id={} bytes={} offset={}",
+            creating ? "create" : "open", (*shm)->id, result.size, result.offset);
+      fuse_reply_ioctl(req, 0, &result, sizeof(result));
+      break;
+    }
     case FS_IOC_GETFLAGS: {
       if (out_bufsz < sizeof(int)) {
         struct iovec iov = {arg, sizeof(int)};
@@ -2014,7 +2094,7 @@ void hf3fs_ioctl(fuse_req_t req,
         struct iovec iov = {arg, sizeof(uint32_t)};
         fuse_reply_ioctl_retry(req, nullptr, 0, &iov, 1);
       } else {
-        uint32_t version = 1;
+        uint32_t version = 2;
         fuse_reply_ioctl(req, 0, &version, sizeof(version));
       }
       break;

@@ -20,7 +20,13 @@ struct IorAttrs {
 struct ShmBuf {
   ShmBuf(const Path &p, size_t sz, size_t bsz, int numa, meta::Uid u, int pid, int ppid);
   ShmBuf(const Path &p, off_t o, size_t sz, size_t bsz, Uuid u);
+  ShmBuf(std::shared_ptr<storage::client::IOBuffer> storage, size_t bsz, Uuid u);
+  ShmBuf(uint8_t *mapping, size_t sz, size_t bsz, Uuid u, int leaseFd, bool creator);
   ~ShmBuf();
+
+  bool isCxlMapping() const { return cxlLeaseFd_ >= 0; }
+  bool ownsCxlRegistration() const { return cxlCreator_; }
+  bool isCxlStorage() const { return bool(cxlStorage_); }
 
   CoTask<void> registerForIO(folly::Executor::KeepAlive<> exec,
                              storage::client::StorageClient &sc,
@@ -73,7 +79,10 @@ struct ShmBuf {
   // for client agent
   std::vector<hf3fs::AtomicSharedPtr<storage::client::IOBuffer>> memhs_;
   folly::coro::Baton memhBaton_;
-  std::atomic<bool> regging_;
+  std::atomic<bool> regging_{false};
+  std::shared_ptr<storage::client::IOBuffer> cxlStorage_;
+  int cxlLeaseFd_{-1};
+  bool cxlCreator_{false};
 };
 
 class ShmBufForIO {

@@ -20,6 +20,9 @@ CLIENT_L3 = (0, 1, 2)
 SERVER_L3 = 3
 MEMORY_NODE = 1
 REGION_BYTES = 1 << 30
+STORAGE_CPUS = ((22, 23), (16, 17), (10, 11), (4, 5))
+STORAGE_ENDPOINTS = (4, 5, 6, 9)  # 7 and 8 belong to admin and monitor.
+TOPOLOGIES = tuple(f"{clients}c{servers}s" for clients in (1, 2, 3) for servers in (1, 2, 4))
 BASE_PORTS = {
     "fdb": 4500,
     "fabric-bootstrap": 12499,
@@ -42,6 +45,19 @@ EXPECTED_PHASES = (
 
 
 @dataclass(frozen=True)
+class StorageNode:
+    index: int
+    node_id: int
+    endpoint: int
+    port: int
+    cpus: tuple[int, ...]
+
+    @property
+    def role(self) -> str:
+        return "storage" if self.index == 0 else f"storage-{self.index}"
+
+
+@dataclass(frozen=True)
 class Topology:
     name: str
     client_cpus: tuple[int, ...]
@@ -50,6 +66,11 @@ class Topology:
     ports: dict[str, int]
     memory_node: int = MEMORY_NODE
     region_bytes: int = REGION_BYTES
+    storage_nodes: tuple[StorageNode, ...] = ()
+
+    @property
+    def storage_count(self) -> int:
+        return len(self.storage_nodes)
 
     @property
     def ranks(self) -> int:
@@ -57,16 +78,24 @@ class Topology:
 
 
 def topology(name: str) -> Topology:
-    counts = {"1c1s": 1, "2c1s": 2, "3c1s": 3}
-    if name not in counts:
-        raise ValueError("topology must be 1c1s, 2c1s, or 3c1s")
-    count = counts[name]
+    match = re.fullmatch(r"([123])c([124])s", name)
+    if match is None:
+        raise ValueError("topology requires 1/2/3 clients and 1/2/4 storage servers")
+    count, servers = map(int, match.groups())
+    nodes = tuple(StorageNode(i, 10000 + i, STORAGE_ENDPOINTS[i], 12503 + i, STORAGE_CPUS[i])
+                  for i in range(servers))
+    server_cpus = dict(SERVER_CPUS)
+    ports = dict(BASE_PORTS)
+    for node in nodes[1:]:
+        server_cpus[node.role] = node.cpus
+        ports[node.role] = node.port
     return Topology(
         name=name,
         client_cpus=CLIENT_CPUS[:count],
         client_l3=CLIENT_L3[:count],
-        server_cpus=dict(SERVER_CPUS),
-        ports=dict(BASE_PORTS),
+        server_cpus=server_cpus,
+        ports=ports,
+        storage_nodes=nodes,
     )
 
 
@@ -147,19 +176,26 @@ def _read_int(path: Path) -> int:
     return int(path.read_text().strip())
 
 
-def validate_host_topology(sysfs_root: Path = Path("/sys")) -> dict:
+def validate_host_topology(sysfs_root: Path = Path("/sys"), *, selected: Topology | None = None) -> dict:
     sysfs_root = Path(sysfs_root)
     cpu_root = sysfs_root / "devices/system/cpu"
     online = parse_linux_list((cpu_root / "online").read_text())
-    selected = set(CLIENT_CPUS)
-    for values in SERVER_CPUS.values():
-        selected.update(values)
-    if not selected <= online:
-        raise ValueError(f"required CPUs are offline: {sorted(selected - online)}")
+    # Retain the original three-client host contract when called without a case.
+    case = selected or topology("3c1s")
+    selected_cpus = set(case.client_cpus)
+    for values in case.server_cpus.values():
+        if selected_cpus.intersection(values):
+            raise ValueError("client/server CPU assignments overlap")
+        selected_cpus.update(values)
+    if not selected_cpus <= online:
+        raise ValueError(f"required CPUs are offline: {sorted(selected_cpus - online)}")
 
     records = []
     physical = set()
-    for cpu in sorted(selected):
+    expected_caches = {cpu: cache for cpu, cache in zip(CLIENT_CPUS, CLIENT_L3)}
+    expected_caches.update({cpu: SERVER_L3 for values in SERVER_CPUS.values() for cpu in values})
+    expected_caches.update({cpu: 3 - i for i, values in enumerate(STORAGE_CPUS) for cpu in values})
+    for cpu in sorted(selected_cpus):
         root = cpu_root / f"cpu{cpu}"
         core = _read_int(root / "topology/core_id")
         package = _read_int(root / "topology/physical_package_id")
@@ -168,7 +204,7 @@ def validate_host_topology(sysfs_root: Path = Path("/sys")) -> dict:
         if identity in physical:
             raise ValueError("selected CPUs include SMT siblings")
         physical.add(identity)
-        expected_l3 = CLIENT_L3[CLIENT_CPUS.index(cpu)] if cpu in CLIENT_CPUS else SERVER_L3
+        expected_l3 = expected_caches[cpu]
         if cache != expected_l3:
             raise ValueError(f"CPU {cpu} L3 changed: {cache} != {expected_l3}")
         records.append({"cpu": cpu, "core": core, "package": package, "l3": cache})

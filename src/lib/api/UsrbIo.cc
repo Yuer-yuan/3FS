@@ -5,7 +5,9 @@
 #include <folly/logging/xlog.h>
 #include <folly/ScopeGuard.h>
 #include <iostream>
+#include <limits>
 #include <numa.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 
 #include "common/logging/LogInit.h"
@@ -31,6 +33,86 @@ struct Hf3fsLibAliveness {
 };
 
 static Hf3fsLibAliveness alive;
+
+static bool cxlNativeIovRequested() {
+  const auto mode = getenv("HF3FS_CXL_NATIVE_IOV");
+  return mode && !strcmp(mode, "1");
+}
+
+static int mapCxlIov(struct hf3fs_iov *iov, const char *mount, size_t size, size_t blockSize, int numa,
+                    const uint8_t *existingId = nullptr) {
+  if (!iov || !mount || !size || blockSize > size || strlen(mount) >= sizeof(iov->mount_point)) {
+    return -EINVAL;
+  }
+  if (getuid() != 0 || geteuid() != 0) {
+    return -EACCES;
+  }
+  // Probe on the mount root, not the legacy IOV directory: closing a legacy
+  // IOV-directory fd removes all registrations owned by that process.
+  int root = open(mount, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (root < 0) {
+    return -errno;
+  }
+  uint32_t version = 0;
+  auto checked = ioctl(root, hf3fs::lib::fuse::HF3FS_IOC_GET_IOCTL_VERSION, &version);
+  close(root);
+  if (checked || version < 2) {
+    return -EOPNOTSUPP;
+  }
+  int lease = open(fmt::format("{}/3fs-virt/iovs", mount).c_str(),
+                   O_RDONLY | O_DIRECTORY | O_NONBLOCK | O_CLOEXEC);
+  if (lease < 0) {
+    return -errno;
+  }
+  SCOPE_EXIT { if (lease >= 0) close(lease); };
+  hf3fs::lib::fuse::Hf3fsIoctlCxlIov request{};
+  request.size = size;
+  request.blockSize = blockSize;
+  if (existingId) {
+    std::memcpy(request.id, existingId, sizeof(request.id));
+  }
+  const auto command = existingId ? hf3fs::lib::fuse::HF3FS_IOC_CXL_IOV_OPEN
+                                  : hf3fs::lib::fuse::HF3FS_IOC_CXL_IOV_CREATE;
+  if (ioctl(lease, command, &request)) {
+    return -errno;
+  }
+  const auto page = sysconf(_SC_PAGESIZE);
+  if (request.size != size || request.blockSize != blockSize || page <= 0 || request.offset % page ||
+      request.offset > static_cast<uint64_t>(std::numeric_limits<off_t>::max()) ||
+      !memchr(request.path, '\0', sizeof(request.path))) {
+    return -EIO;
+  }
+  const int backing = open(request.path, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+  if (backing < 0) {
+    return -errno;
+  }
+  SCOPE_EXIT { close(backing); };
+  struct stat st{};
+  if (fstat(backing, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+      request.device != static_cast<uint64_t>(st.st_dev) || request.inode != static_cast<uint64_t>(st.st_ino) ||
+      request.offset > static_cast<uint64_t>(st.st_size) || size > static_cast<uint64_t>(st.st_size) - request.offset) {
+    return -EIO;
+  }
+  void *mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, backing, request.offset);
+  if (mapping == MAP_FAILED) {
+    return -errno;
+  }
+  bool success = false;
+  SCOPE_EXIT { if (!success) munmap(mapping, size); };
+  hf3fs::Uuid id;
+  std::memcpy(id.bytes(), request.id, sizeof(request.id));
+  auto shm = new hf3fs::lib::ShmBuf(static_cast<uint8_t *>(mapping), size, blockSize, id, lease, !existingId);
+  lease = -1;
+  iov->base = shm->bufStart;
+  iov->iovh = shm;
+  std::memcpy(iov->id, request.id, sizeof(iov->id));
+  strcpy(iov->mount_point, mount);
+  iov->size = size;
+  iov->block_size = blockSize;
+  iov->numa = numa;
+  success = true;
+  return 0;
+}
 
 bool hf3fs_is_hf3fs(int fd) {
   uint32_t magic = 0;
@@ -118,6 +200,9 @@ int hf3fs_iovcreate_general(struct hf3fs_iov *iov,
                             int priority = 0,
                             int timeout = 0,
                             uint64_t flags = 0) {
+  if (!is_io_ring && cxlNativeIovRequested()) {
+    return mapCxlIov(iov, hf3fs_mount_point, size, block_size, numa);
+  }
   if (!iov) {
     return -EINVAL;
   }
@@ -212,9 +297,10 @@ void hf3fs_iovdestroy_general(struct hf3fs_iov *iov,
                           is_io_ring && priority != 0 ? fmt::format(".p{}", priority < 0 ? 'h' : 'l') : std::string(),
                           is_io_ring ? fmt::format(".t{}", timeout) : std::string(),
                           is_io_ring && flags != 0 ? fmt::format(".f{}", flags) : std::string());
-  unlink(link.c_str());
-
   auto *shm = static_cast<hf3fs::lib::ShmBuf *>(iov->iovh);
+  if (!shm->isCxlMapping() || shm->ownsCxlRegistration()) {
+    unlink(link.c_str());
+  }
   if (!is_io_ring) {
     shm->maybeUnlinkShm();
   }
@@ -232,6 +318,9 @@ int hf3fs_iovopen(struct hf3fs_iov *iov,
                   size_t size,
                   size_t block_size,
                   int numa) {
+  if (cxlNativeIovRequested()) {
+    return mapCxlIov(iov, hf3fs_mount_point, size, block_size, numa, id);
+  }
   hf3fs::Uuid uuid;
   memcpy(uuid.bytes(), id, uuid.static_size());
 
@@ -346,11 +435,12 @@ static int cqeSem(sem_t *&sem, const char *hf3fs_mount_point, int prio) {
       XLOGF(ERR, "hf3fs reports strange link target for submit sem");
       return -EIO;
     } else {
+      target[lres] = '\0';  // readlink does not append a string terminator.
       break;
     }
   }
 
-  auto semPath = hf3fs::Path(target).lexically_normal();
+  auto semPath = hf3fs::Path(target.data()).lexically_normal();
   static const auto devShm = hf3fs::Path("/dev/shm");
 
   auto [sm, pm] = std::mismatch(devShm.begin(), devShm.end(), semPath.begin(), semPath.end());

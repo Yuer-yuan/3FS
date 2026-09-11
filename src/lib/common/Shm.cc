@@ -51,6 +51,36 @@ ShmBuf::ShmBuf(const Path &p, off_t o, size_t sz, size_t bsz, Uuid u)
   XLOGF(DBG, "this {} buf start {} off {}", (void *)this, (void *)bufStart, off);
 }
 
+ShmBuf::ShmBuf(std::shared_ptr<storage::client::IOBuffer> storage, size_t bsz, Uuid u)
+    : bufStart(storage->data()),
+      size(storage->size()),
+      blockSize(bsz ? bsz : size),
+      off(0),
+      id(u),
+      owner_(false),
+      numaNode_(-1),
+      memhs_((size - 1) / blockSize + 1),
+      cxlStorage_(std::move(storage)) {
+  for (size_t i = 0; i < memhs_.size(); ++i) {
+    auto range = cxlStorage_->subrange(i * blockSize, std::min(size - i * blockSize, blockSize));
+    if (!range) {
+      throw std::runtime_error("invalid CXL IOV block range");
+    }
+    memhs_[i].store(std::make_shared<storage::client::IOBuffer>(std::move(*range)));
+  }
+}
+
+ShmBuf::ShmBuf(uint8_t *mapping, size_t sz, size_t bsz, Uuid u, int leaseFd, bool creator)
+    : bufStart(mapping),
+      size(sz),
+      blockSize(bsz ? bsz : sz),
+      off(0),
+      id(u),
+      owner_(false),
+      numaNode_(-1),
+      cxlLeaseFd_(leaseFd),
+      cxlCreator_(creator) {}
+
 ShmBuf::~ShmBuf() {
   XLOGF(DBG, "calling dtor of shm {}", (void *)this);
 
@@ -62,6 +92,10 @@ ShmBuf::~ShmBuf() {
   // }
 
   unmapBuf();
+  // The FUSE directory handle pins the arena allocation until after munmap.
+  if (cxlLeaseFd_ >= 0) {
+    close(cxlLeaseFd_);
+  }
 }
 
 CoTask<void> ShmBuf::deregisterForIO() {
@@ -127,7 +161,9 @@ CoTask<void> ShmBuf::registerForIO(folly::Executor::KeepAlive<> exec,
 
 void ShmBuf::unmapBuf() {
   if (bufStart) {
-    munmap(bufStart, size);
+    if (!cxlStorage_) {
+      munmap(bufStart, size);
+    }
 
     if (owner_) {
       shm_unlink(path.c_str());

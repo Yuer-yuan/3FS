@@ -106,15 +106,22 @@ def execute(args: argparse.Namespace, environment: dict[str, str]) -> int:
     child_env.pop("LD_PRELOAD", None)
     if args.library_path:
         child_env["LD_LIBRARY_PATH"] = args.library_path
-    completed = subprocess.run(
-        [str(args.io500), str(args.config), "--mode=extended"],
-        env=child_env,
-        check=False,
-    )
+    if getattr(args, 'posix_mode', None) is not None:
+        from posix_frontend import run_rank
+        if args.posix_library is None:
+            raise RankError('POSIX frontend requires its exact library path')
+        returncode = run_rank(args, child_env, view, receipt, receipt_path, atomic_record)
+    else:
+        completed = subprocess.run(
+            [str(args.io500), str(args.config), "--mode=extended"],
+            env=child_env,
+            check=False,
+        )
+        returncode = completed.returncode
     receipt["host_monotonic_end_ns"] = time.monotonic_ns()
-    receipt["returncode"] = completed.returncode
+    receipt["returncode"] = returncode
     atomic_record(receipt_path, receipt)
-    return completed.returncode
+    return returncode
 
 
 def parser() -> argparse.ArgumentParser:
@@ -128,6 +135,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--config", type=Path, required=True)
     result.add_argument("--library-path", default="")
     result.add_argument("--mount-bin", default="/usr/bin/mount")
+    result.add_argument("--posix-mode", choices=('fuse', 'iov'))
+    result.add_argument("--posix-library", type=Path)
     return result
 
 

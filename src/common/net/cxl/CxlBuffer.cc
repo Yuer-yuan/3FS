@@ -262,9 +262,20 @@ Result<RemoteBufferHandle> CxlBufferArena::exportAllocation(const std::shared_pt
       slot.requestedLength != allocation->requestedLength) {
     return makeError(RPCCode::kStaleGeneration, "CXL allocation was released or reused");
   }
-  slot.permissions |= requestedPermissions;
-  RETURN_ON_ERROR(publishSlotLocked(allocation->slot, CxlAllocationState::Exported));
-  slot.exported = true;
+  // Chunk subranges of one IOV share this allocation record. Republishing
+  // unchanged permissions can make an already-issued remote handle observe
+  // an odd sequence and fail spuriously while another chunk is exported.
+  const uint32_t previousPermissions = slot.permissions;
+  if (!slot.exported || (previousPermissions & requestedPermissions) != requestedPermissions) {
+    slot.permissions = previousPermissions | requestedPermissions;
+    auto published = publishSlotLocked(allocation->slot, CxlAllocationState::Exported);
+    if (!published) {
+      // Only successfully published permissions may satisfy a later export.
+      slot.permissions = previousPermissions;
+      return makeError(std::move(published.error()));
+    }
+    slot.exported = true;
+  }
 
   RemoteBufferHandle handle{};
   handle.abiVersion = kCxlAbiVersion;
