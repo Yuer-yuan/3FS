@@ -32,6 +32,14 @@ Result<Void> PublicationLedger::retain(WriteItemPtr item) {
 
 Result<Void> PublicationLedger::observe(const PublicationSnapshot &snapshot) {
   std::lock_guard lock(mutex_);
+  if (snapshot.pending) {
+    if (snapshot.laneGeneration != laneGeneration_ || snapshot.trustworthy) {
+      return makeError(RPCCode::kStaleGeneration, "invalid pending CXL publication identity");
+    }
+    // No stable delivery evidence: neither advance cursors nor release a
+    // request buffer. A response or a later stable observation may do that.
+    return Void{};
+  }
   if (!validSnapshotLocked(snapshot)) {
     return makeError(RPCCode::kStaleGeneration, "invalid or non-monotonic CXL publication snapshot");
   }
@@ -89,7 +97,7 @@ size_t PublicationLedger::retainedBufferCount() const {
 }
 
 bool PublicationLedger::validSnapshotLocked(const PublicationSnapshot &snapshot) const {
-  return snapshot.trustworthy && snapshot.laneGeneration == laneGeneration_ &&
+  return !snapshot.pending && snapshot.trustworthy && snapshot.laneGeneration == laneGeneration_ &&
          snapshot.peerDeliveredOffset <= snapshot.publishedOffset &&
          snapshot.publishedOffset <= snapshot.acceptedOffset && snapshot.acceptedOffset <= nextOffset_ &&
          snapshot.acceptedOffset >= lastAccepted_ && snapshot.publishedOffset >= lastPublished_ &&

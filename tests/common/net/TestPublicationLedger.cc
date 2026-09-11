@@ -136,5 +136,51 @@ TEST(TestPublicationLedger, CorruptOrWrongGenerationSnapshotNeverAutoRetries) {
   }
 }
 
+TEST(TestPublicationLedger, PendingObservationRetainsBufferAndExportUntilRealCompletion) {
+  PublicationLedger ledger(14);
+  auto range = ledger.reserve(256);
+  ASSERT_OK(range);
+  auto lifetime = std::make_shared<int>(42);
+  std::weak_ptr<int> observer = lifetime;
+  ASSERT_OK(ledger.retain(request(71, *range, std::move(lifetime))));
+  auto pending = snapshot(14, 256, 256, 0, false);
+  pending.pending = true;
+  ASSERT_OK(ledger.observe(pending));
+  EXPECT_EQ(ledger.retainedBufferCount(), 1);
+  EXPECT_FALSE(observer.expired());
+  ASSERT_OK(ledger.observe(snapshot(14, 256, 256, 256)));
+  EXPECT_EQ(ledger.retainedBufferCount(), 0);
+  EXPECT_FALSE(observer.expired());
+  ASSERT_OK(ledger.complete(71));
+  EXPECT_TRUE(observer.expired());
+}
+
+TEST(TestPublicationLedger, PendingRetirementNeverAuthorizesRetryOrDiscardsExportLifetime) {
+  PublicationLedger ledger(15);
+  auto range = ledger.reserve(256);
+  ASSERT_OK(range);
+  auto lifetime = std::make_shared<int>(42);
+  std::weak_ptr<int> observer = lifetime;
+  ASSERT_OK(ledger.retain(request(72, *range, std::move(lifetime))));
+  auto pending = snapshot(15, 256, 256, 0, false);
+  pending.pending = true;
+  auto retired = ledger.retire(pending);
+  ASSERT_EQ(retired.size(), 1);
+  EXPECT_EQ(retired[0].disposition, CompletionDisposition::LaneRetired);
+  EXPECT_FALSE(retired[0].retryable);
+  EXPECT_TRUE(retired[0].requestLifetime);
+  EXPECT_FALSE(observer.expired());
+}
+
+TEST(TestPublicationLedger, PendingDoesNotExcuseWrongGenerationOrContradictoryTrust) {
+  PublicationLedger ledger(16);
+  auto wrongGeneration = snapshot(17, 0, 0, 0, false);
+  wrongGeneration.pending = true;
+  ASSERT_ERROR(ledger.observe(wrongGeneration), RPCCode::kStaleGeneration);
+  auto contradictory = snapshot(16, 0, 0, 0, true);
+  contradictory.pending = true;
+  ASSERT_ERROR(ledger.observe(contradictory), RPCCode::kStaleGeneration);
+}
+
 }  // namespace
 }  // namespace hf3fs::net::test

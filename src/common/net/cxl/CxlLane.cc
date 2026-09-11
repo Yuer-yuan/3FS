@@ -320,21 +320,46 @@ Result<bool> CxlLane::observeWritable(Direction direction) const {
   return producer - consumer < config_.depth;
 }
 
-Result<uint64_t> CxlLane::observePeerDeliveredOffset(Direction direction, uint64_t publishedOffset) const {
+Result<std::optional<uint64_t>> CxlLane::observePeerDeliveredOffset(Direction direction, uint64_t publishedOffset) const {
   if (!mayPush(direction)) {
     return makeError(StatusCode::kInvalidArg, "CXL lane role does not own this producer");
   }
   const auto &state = directions_[index(direction)];
-  auto snapshot = loadCxlOwnerRecord<CxlDeliveredRecord>(state.deliveredRecord);
-  if (!snapshot || loadLe64(&snapshot->sessionGeneration) != config_.sessionGeneration ||
-      loadLe64(&snapshot->laneGeneration) != config_.laneGeneration ||
-      loadLe64(&snapshot->deliveredOffsetComplement) != ~loadLe64(&snapshot->deliveredOffset) ||
-      loadLe32(&snapshot->reserved0) != 0 || loadLe64(&snapshot->reserved1) != 0 ||
-      loadLe64(&snapshot->reserved2) != 0 || loadLe32(&snapshot->crc32c) != deliveredCrc(*snapshot) ||
-      loadLe64(&snapshot->deliveredOffset) > publishedOffset) {
-    return makeError(StatusCode::kDataCorruption, "untrustworthy CXL peer-delivered record");
+  // A seqlock writer may be descheduled with an odd sequence. Take one
+  // nonblocking observation and let ordinary I/O progress observe it again;
+  // exhausting a spin budget never proves that a valid publication is bad.
+  auto snapshot = loadCxlOwnerRecord<CxlDeliveredRecord>(state.deliveredRecord, 1);
+  if (!snapshot) {
+    auto *words = reinterpret_cast<uint64_t *>(state.deliveredRecord.data());
+    if (std::atomic_ref<uint64_t>(words[0]).load(std::memory_order_acquire) == 0) {
+      return makeError(StatusCode::kDataCorruption, "uninitialized CXL peer-delivered record");
+    }
+    return std::optional<uint64_t>{};
   }
-  return loadLe64(&snapshot->deliveredOffset);
+  std::string_view invalidReason;
+  if (loadLe64(&snapshot->sessionGeneration) != config_.sessionGeneration) {
+    invalidReason = "session generation mismatch";
+  } else if (loadLe64(&snapshot->laneGeneration) != config_.laneGeneration) {
+    invalidReason = "lane generation mismatch";
+  } else if (loadLe64(&snapshot->deliveredOffsetComplement) != ~loadLe64(&snapshot->deliveredOffset)) {
+    invalidReason = "delivered complement mismatch";
+  } else if (loadLe32(&snapshot->reserved0) != 0 || loadLe64(&snapshot->reserved1) != 0 ||
+             loadLe64(&snapshot->reserved2) != 0) {
+    invalidReason = "nonzero reserved field";
+  } else if (loadLe32(&snapshot->crc32c) != deliveredCrc(*snapshot)) {
+    invalidReason = "delivered CRC mismatch";
+  } else if (loadLe64(&snapshot->deliveredOffset) > publishedOffset) {
+    invalidReason = "delivered offset exceeds published offset";
+  }
+  if (!invalidReason.empty()) {
+    return makeError(StatusCode::kDataCorruption,
+                     fmt::format("CXL peer-delivered record {}: sequence={} session={}/{} lane={}/{} delivered={} published={}",
+                                 invalidReason, loadLe64(&snapshot->recordSequence),
+                                 loadLe64(&snapshot->sessionGeneration), config_.sessionGeneration,
+                                 loadLe64(&snapshot->laneGeneration), config_.laneGeneration,
+                                 loadLe64(&snapshot->deliveredOffset), publishedOffset));
+  }
+  return std::optional<uint64_t>{loadLe64(&snapshot->deliveredOffset)};
 }
 
 Result<bool> CxlLane::readable(Direction direction) {
@@ -382,7 +407,7 @@ Result<bool> CxlLane::writable(Direction direction) {
   return producer - consumer < config_.depth;
 }
 
-Result<uint64_t> CxlLane::peerDeliveredOffset(Direction direction) {
+Result<std::optional<uint64_t>> CxlLane::peerDeliveredOffset(Direction direction) {
   if (auto retired = retirementStatus()) {
     return makeError(*retired);
   }

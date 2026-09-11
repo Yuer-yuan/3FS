@@ -18,6 +18,7 @@ void CxlMetrics::addDeliveredBytes(uint64_t value) noexcept {
   deliveredBytes_.fetch_add(value, std::memory_order_relaxed);
 }
 void CxlMetrics::addCorruptPublication() noexcept { corruptPublications_.fetch_add(1, std::memory_order_relaxed); }
+void CxlMetrics::addPendingPublication() noexcept { pendingPublications_.fetch_add(1, std::memory_order_relaxed); }
 void CxlMetrics::addRetiredLane() noexcept { retiredLanes_.fetch_add(1, std::memory_order_relaxed); }
 
 CxlMetricsSnapshot CxlMetrics::snapshot() const noexcept {
@@ -30,6 +31,7 @@ CxlMetricsSnapshot CxlMetrics::snapshot() const noexcept {
       .publishedBytes = publishedBytes_.load(std::memory_order_relaxed),
       .deliveredBytes = deliveredBytes_.load(std::memory_order_relaxed),
       .corruptPublications = corruptPublications_.load(std::memory_order_relaxed),
+      .pendingPublications = pendingPublications_.load(std::memory_order_relaxed),
       .retiredLanes = retiredLanes_.load(std::memory_order_relaxed),
   };
 }

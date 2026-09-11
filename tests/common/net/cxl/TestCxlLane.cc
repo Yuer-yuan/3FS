@@ -373,6 +373,66 @@ TEST_F(MappedCxlLaneTest, RejectsUntrustworthyDeliveredRecord) {
   EXPECT_TRUE(requester_->isRetired());
 }
 
+TEST_F(MappedCxlLaneTest, InProgressDeliveredPublicationDoesNotRetireLane) {
+  auto offset = config_.directions[0].deliveredRecordOffset;
+  auto record = acceptorRegion_->checkedRange(offset, sizeof(CxlDeliveredRecord), alignof(CxlDeliveredRecord));
+  ASSERT_OK(record);
+  auto *words = reinterpret_cast<uint64_t *>(record->data());
+  const auto finalSequence = std::atomic_ref<uint64_t>(words[0]).load(std::memory_order_acquire);
+  ASSERT_NE(finalSequence, 0);
+  ASSERT_EQ(finalSequence & 1U, 0);
+  std::atomic_ref<uint64_t>(words[0]).store(finalSequence - 1U, std::memory_order_release);
+  auto pending = requester_->peerDeliveredOffset(Direction::Submission);
+  ASSERT_OK(pending);
+  EXPECT_FALSE(pending->has_value());
+  EXPECT_FALSE(requester_->isRetired());
+  std::atomic_ref<uint64_t>(words[0]).store(finalSequence, std::memory_order_release);
+  ASSERT_RESULT_EQ(0, requester_->peerDeliveredOffset(Direction::Submission));
+}
+
+TEST_F(MappedCxlLaneTest, StableInvalidDeliveredFieldsAreNotPending) {
+  auto record = acceptorRegion_->checkedRange(config_.directions[0].deliveredRecordOffset,
+                                              sizeof(CxlDeliveredRecord), alignof(CxlDeliveredRecord));
+  ASSERT_OK(record);
+  auto original = loadCxlOwnerRecord<CxlDeliveredRecord>(*record);
+  ASSERT_TRUE(original.has_value());
+  for (unsigned field = 0; field != 8; ++field) {
+    SCOPED_TRACE(field);
+    auto invalid = *original;
+    switch (field) {
+      case 0: storeLe64(&invalid.sessionGeneration, config_.sessionGeneration + 1); break;
+      case 1: storeLe64(&invalid.laneGeneration, config_.laneGeneration + 1); break;
+      case 2: storeLe64(&invalid.deliveredOffsetComplement, 0); break;
+      case 3: storeLe32(&invalid.reserved0, 1); break;
+      case 4: storeLe64(&invalid.reserved1, 1); break;
+      case 5: storeLe64(&invalid.reserved2, 1); break;
+      case 6: break;  // Corrupt only the checksum below.
+      case 7:
+        storeLe64(&invalid.deliveredOffset, 1);
+        storeLe64(&invalid.deliveredOffsetComplement, ~uint64_t{1});
+        break;
+    }
+    storeLe32(&invalid.crc32c, cxlCrc32cWithZeroedU32(invalid, offsetof(CxlDeliveredRecord, crc32c)));
+    if (field == 6) {
+      storeLe32(&invalid.crc32c, loadLe32(&invalid.crc32c) ^ 1U);
+    }
+    ASSERT_TRUE(publishCxlOwnerRecord(*record, invalid));
+    ASSERT_ERROR(requester_->observePeerDeliveredOffset(Direction::Submission, 0), StatusCode::kDataCorruption);
+  }
+  ASSERT_TRUE(publishCxlOwnerRecord(*record, *original));
+  ASSERT_RESULT_EQ(0, requester_->peerDeliveredOffset(Direction::Submission));
+}
+
+TEST_F(MappedCxlLaneTest, UninitializedDeliveredRecordStillRetiresLane) {
+  auto record = acceptorRegion_->checkedRange(config_.directions[0].deliveredRecordOffset,
+                                              sizeof(CxlDeliveredRecord), alignof(CxlDeliveredRecord));
+  ASSERT_OK(record);
+  auto *words = reinterpret_cast<uint64_t *>(record->data());
+  std::atomic_ref<uint64_t>(words[0]).store(0, std::memory_order_release);
+  ASSERT_ERROR(requester_->peerDeliveredOffset(Direction::Submission), StatusCode::kDataCorruption);
+  EXPECT_TRUE(requester_->isRetired());
+}
+
 TEST(TestCxlLane, CursorAtomicIsAlwaysLockFree) { static_assert(std::atomic_ref<uint64_t>::is_always_lock_free); }
 
 }  // namespace hf3fs::net::cxl

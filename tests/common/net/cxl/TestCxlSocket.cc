@@ -505,6 +505,65 @@ TEST_F(TestCxlSocket, CorruptDeliveredRecordMakesSnapshotUntrustworthy) {
   auto snapshot = client_->publicationSnapshot();
   ASSERT_TRUE(snapshot.has_value());
   EXPECT_FALSE(snapshot->trustworthy);
+  EXPECT_FALSE(snapshot->pending);
+}
+
+TEST_F(TestCxlSocket, InProgressDeliveredPublicationIsNotCorruption) {
+  const auto payload = deterministicBytes(kTestCellBytes, 83);
+  iovec vector{.iov_base = const_cast<std::byte *>(payload.data()), .iov_len = payload.size()};
+  ASSERT_RESULT_EQ(payload.size(), client_->send(&vector, 1));
+  std::vector<uint8_t> output(payload.size());
+  ASSERT_RESULT_EQ(output.size(), server_->recv(folly::MutableByteRange(output.data(), output.size())));
+
+  auto range = region_->checkedRange(config_.directions[0].deliveredRecordOffset,
+                                     sizeof(CxlDeliveredRecord), alignof(CxlDeliveredRecord));
+  ASSERT_OK(range);
+  auto *words = reinterpret_cast<uint64_t *>(range->data());
+  const auto finalSequence = std::atomic_ref<uint64_t>(words[0]).load(std::memory_order_acquire);
+  ASSERT_NE(finalSequence, 0);
+  ASSERT_EQ(finalSequence & 1U, 0);
+  const auto corruptBefore = client_->metrics()->snapshot().corruptPublications;
+
+  // Deterministically pause a valid peer at the last step of publication:
+  // its payload words are ready, but its final even sequence is not released.
+  std::atomic_ref<uint64_t>(words[0]).store(finalSequence - 1U, std::memory_order_release);
+  auto pending = client_->publicationSnapshot();
+  ASSERT_TRUE(pending.has_value());
+  EXPECT_TRUE(pending->pending);
+  EXPECT_FALSE(pending->trustworthy);
+  EXPECT_EQ(client_->metrics()->snapshot().corruptPublications, corruptBefore);
+  std::atomic_ref<uint64_t>(words[0]).store(finalSequence, std::memory_order_release);
+
+  auto completed = client_->publicationSnapshot();
+  ASSERT_TRUE(completed.has_value());
+  EXPECT_TRUE(completed->trustworthy);
+  EXPECT_FALSE(completed->pending);
+  EXPECT_EQ(completed->peerDeliveredOffset, payload.size());
+  EXPECT_EQ(client_->metrics()->snapshot().corruptPublications, corruptBefore);
+  ASSERT_OK(client_->check());
+}
+
+TEST_F(TestCxlSocket, StableDeliveredRegressionIsNotPending) {
+  auto range = region_->checkedRange(config_.directions[0].deliveredRecordOffset,
+                                     sizeof(CxlDeliveredRecord), alignof(CxlDeliveredRecord));
+  ASSERT_OK(range);
+  auto original = loadCxlOwnerRecord<CxlDeliveredRecord>(*range);
+  ASSERT_TRUE(original.has_value());
+  auto payload = deterministicBytes(1, 84);
+  iovec vector{.iov_base = payload.data(), .iov_len = payload.size()};
+  ASSERT_RESULT_EQ(1, client_->send(&vector, 1));
+  ASSERT_OK(client_->flush());
+  uint8_t output;
+  ASSERT_RESULT_EQ(1, server_->recv(folly::MutableByteRange(&output, 1)));
+  auto delivered = client_->publicationSnapshot();
+  ASSERT_TRUE(delivered.has_value());
+  ASSERT_TRUE(delivered->trustworthy);
+  ASSERT_EQ(delivered->peerDeliveredOffset, 1);
+  ASSERT_TRUE(publishCxlOwnerRecord(*range, *original));
+  auto regressed = client_->publicationSnapshot();
+  ASSERT_TRUE(regressed.has_value());
+  EXPECT_FALSE(regressed->trustworthy);
+  EXPECT_FALSE(regressed->pending);
 }
 
 TEST_F(TestCxlSocket, PeerIdentityComesFromDeclaredCxlAddress) {

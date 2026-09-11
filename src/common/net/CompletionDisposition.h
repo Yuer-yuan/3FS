@@ -17,6 +17,10 @@ struct PublicationSnapshot {
   uint64_t publishedOffset;
   uint64_t peerDeliveredOffset;
   bool trustworthy;
+  // Process-local observation state, not part of the shared/wire ABI.
+  // Pending means the peer is publishing: no watermark may be consumed and
+  // no retry decision may be derived until a stable record is observed.
+  bool pending{false};
 };
 
 struct PublicationRange {

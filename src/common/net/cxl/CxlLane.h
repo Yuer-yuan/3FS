@@ -67,10 +67,12 @@ class CxlLane {
 
   Result<bool> readable(Direction direction);
   Result<bool> writable(Direction direction);
-  Result<uint64_t> peerDeliveredOffset(Direction direction);
+  Result<std::optional<uint64_t>> peerDeliveredOffset(Direction direction);
   Result<bool> observeReadable(Direction direction) const;
   Result<bool> observeWritable(Direction direction) const;
-  Result<uint64_t> observePeerDeliveredOffset(Direction direction, uint64_t publishedOffset) const;
+  // An empty successful observation is transient publication contention,
+  // not a corrupt record. Callers must retain their previous evidence.
+  Result<std::optional<uint64_t>> observePeerDeliveredOffset(Direction direction, uint64_t publishedOffset) const;
 
   void retire(Status status);
   bool isRetired() const noexcept { return retirementCode_.load(std::memory_order_acquire) != StatusCode::kOK; }

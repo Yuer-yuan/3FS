@@ -14,6 +14,7 @@ struct CxlMetricsSnapshot {
   uint64_t publishedBytes{};
   uint64_t deliveredBytes{};
   uint64_t corruptPublications{};
+  uint64_t pendingPublications{};
   uint64_t retiredLanes{};
 };
 
@@ -27,6 +28,7 @@ class CxlMetrics {
   void addPublishedBytes(uint64_t value) noexcept;
   void addDeliveredBytes(uint64_t value) noexcept;
   void addCorruptPublication() noexcept;
+  void addPendingPublication() noexcept;
   void addRetiredLane() noexcept;
 
   CxlMetricsSnapshot snapshot() const noexcept;
@@ -40,6 +42,7 @@ class CxlMetrics {
   std::atomic<uint64_t> publishedBytes_{};
   std::atomic<uint64_t> deliveredBytes_{};
   std::atomic<uint64_t> corruptPublications_{};
+  std::atomic<uint64_t> pendingPublications_{};
   std::atomic<uint64_t> retiredLanes_{};
 };
 

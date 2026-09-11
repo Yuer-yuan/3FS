@@ -575,7 +575,14 @@ Result<Void> Transport::observePublication() {
   if (!snapshot) {
     return makeError(StatusCode::kDataCorruption, "CXL transport lost its publication snapshot");
   }
-  return publicationLedger_->observe(*snapshot);
+  auto observed = publicationLedger_->observe(*snapshot);
+  if (UNLIKELY(!observed)) {
+    XLOGF(WARNING,
+          "transport {} publication observation failed: {} generation={} accepted={} published={} delivered={} trustworthy={} pending={}",
+          describe(), observed.error(), snapshot->laneGeneration, snapshot->acceptedOffset,
+          snapshot->publishedOffset, snapshot->peerDeliveredOffset, snapshot->trustworthy, snapshot->pending);
+  }
+  return observed;
 }
 
 void Transport::initializePublicationLedger() {

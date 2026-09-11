@@ -172,8 +172,19 @@ std::optional<PublicationSnapshot> CxlSocket::publicationSnapshot() const noexce
   const uint64_t published = publishedOffset_.load(std::memory_order_acquire);
   const uint64_t accepted = acceptedOffset_.load(std::memory_order_acquire);
   auto deliveredResult = lane_.observePeerDeliveredOffset(outbound_, published);
-  bool trustworthy = deliveredResult.hasValue() && published <= accepted;
-  uint64_t delivered = trustworthy ? *deliveredResult : 0;
+  if (deliveredResult.hasValue() && !deliveredResult->has_value() && published <= accepted) {
+    metrics_->addPendingPublication();
+    return PublicationSnapshot{
+        .laneGeneration = lane_.config().laneGeneration,
+        .acceptedOffset = accepted,
+        .publishedOffset = published,
+        .peerDeliveredOffset = 0,
+        .trustworthy = false,
+        .pending = true,
+    };
+  }
+  bool trustworthy = deliveredResult.hasValue() && deliveredResult->has_value() && published <= accepted;
+  uint64_t delivered = trustworthy ? **deliveredResult : 0;
   if (trustworthy) {
     uint64_t previous = lastDeliveredOffset_.load(std::memory_order_acquire);
     while (delivered > previous &&
@@ -183,6 +194,18 @@ std::optional<PublicationSnapshot> CxlSocket::publicationSnapshot() const noexce
   }
   if (!trustworthy) {
     metrics_->addCorruptPublication();
+    const auto identity = fmt::format("peer={} session={} lane={} generation={} requester={} target={} outbound={}",
+                                      peer_, lane_.config().sessionGeneration, lane_.config().laneId,
+                                      lane_.config().laneGeneration, lane_.config().requesterEndpoint,
+                                      lane_.config().targetEndpoint, static_cast<unsigned>(outbound_));
+    if (!deliveredResult) {
+      XLOGF(WARNING, "CXL_PUBLICATION_INVALID {} reason={} accepted={} published={}",
+            identity, deliveredResult.error(), accepted, published);
+    } else {
+      XLOGF(WARNING,
+            "CXL_PUBLICATION_INVALID {} reason=local-watermark-order accepted={} published={} delivered={} previous_delivered={}",
+            identity, accepted, published, delivered, lastDeliveredOffset_.load(std::memory_order_acquire));
+    }
   }
   return PublicationSnapshot{
       .laneGeneration = lane_.config().laneGeneration,
